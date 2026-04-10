@@ -1104,6 +1104,28 @@ class ExternalCliMCPServerTest(unittest.TestCase):
             tools["status"]["inputSchema"]["properties"]["device_id"]["description"],
         )
 
+    def test_tools_list_includes_ping_subcommand_guidance(self):
+        self._initialize_server()
+
+        response = self.server.process_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list",
+            }
+        )
+
+        tools = {tool["name"]: tool for tool in response["result"]["tools"]}
+        self.assertIn("Ping subcommands:", tools["tool"]["description"])
+        self.assertIn(
+            "Use `list` to discover diagnostics. For ping, use `ping {\"action\":\"start\",\"host\":\"8.8.8.8\"}` to begin",
+            tools["tool"]["inputSchema"]["properties"]["subcommand"]["description"],
+        )
+        self.assertIn(
+            "`ping {\"start_line\":0}` to read output",
+            tools["tool"]["inputSchema"]["properties"]["subcommand"]["description"],
+        )
+
     def test_tool_list_includes_speedtest_wrapper(self):
         tool_list_response = {"status": 200, "result": {"tools": [{"name": "ping"}]}}
 

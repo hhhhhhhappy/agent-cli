@@ -212,6 +212,11 @@ TOOL_SPECS = [
             "- `traceroute start` defaults `interface=any` when omitted.\n"
             "- `tcpdump start` only supports `capture_mode` of `show` through MCP and requires `capture_time`, exactly one `local_iface` entry, and an explicit `expert_options` string on that item.\n"
             "- Some diagnostics are long-running and may need repeated status and output polling.\n\n"
+            "Ping subcommands:\n"
+            "- `ping {\"action\":\"start\",\"host\":\"8.8.8.8\"}`: start a new ping session. Required: `host`. Optional: `interface`, `ping_count`, and `packet_size`.\n"
+            "- `ping {\"action\":\"status\"}`: read the current ping session state.\n"
+            "- `ping {\"start_line\":0}`: read incremental ping output from a given offset. Use this form instead of an `action` when fetching output.\n"
+            "- `ping {\"action\":\"stop\"}`: stop the current running ping session.\n\n"
             "Speedtest subcommands:\n"
             "- `speedtest {\"action\":\"servers\"}`: list available speedtest server nodes so the user can choose a `server_id`.\n"
             "- `speedtest {\"action\":\"start\"}`: start a new speedtest session. Optional fields: `server_id` and `ip`.\n"
@@ -235,7 +240,7 @@ TOOL_SPECS = [
             "- Speedtest servers: `speedtest {\"action\":\"servers\"}`"
         ),
         "requires_subcommand": True,
-        "subcommand_description": "Suffix appended after `tool`, such as `list`, `ping {\"action\":\"start\",\"host\":\"8.8.8.8\"}`, `speedtest {\"action\":\"servers\"}`, or `speedtest {\"action\":\"start\",\"server_id\":12345,\"ip\":\"198.51.100.10\"}`.",
+        "subcommand_description": "Suffix appended after `tool`. Use `list` to discover diagnostics. For ping, use `ping {\"action\":\"start\",\"host\":\"8.8.8.8\"}` to begin, `ping {\"action\":\"status\"}` to poll state, `ping {\"start_line\":0}` to read output, and `ping {\"action\":\"stop\"}` to stop. Other examples: `speedtest {\"action\":\"servers\"}` or `speedtest {\"action\":\"start\",\"server_id\":12345,\"ip\":\"198.51.100.10\"}`.",
         "annotations": MUTATING_TOOL_ANNOTATIONS,
     },
 ]
