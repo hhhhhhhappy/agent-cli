@@ -62,12 +62,6 @@ claude mcp add agent-cli  --transport stdio  -- uvx --from git+https://github.co
 }
 ```
 
-**Install the bundled skills**:
-
-```bash
-uvx --from git+https://github.com/inhandnet/agent-cli agent-cli-skills install
-```
-
 ### Option B — Local Checkout
 
 ```bash
@@ -101,12 +95,12 @@ Then edit `mcp-server/config/config.json` with your device credentials:
 | `buser` | no       | `adm`   | Bootstrap SSH username                                   |
 | `port`  | no       | `22`    | SSH port                                                 |
 
-## SSH Key PATH
 
-On first connection to a device, the server will creat SSH Key:
+## Install the bundled skills:
 
-1. If use `Option B` per-device key directory under  `agent-cli/mcp-server/keys/<device_id>/`
-2. If use `Option A`,a per-device key directory under  `~/.agent-cli-mcp/keys/<device_id>/`
+```bash
+uvx --from git+https://github.com/inhandnet/agent-cli agent-cli-skills install
+```
 
 
 ## Bundled Skill: `device-diagnostics`
