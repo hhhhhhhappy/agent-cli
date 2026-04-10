@@ -1,0 +1,4 @@
+interface:
+  display_name: "Device Diagnostics"
+  short_description: "Diagnose device faults via MCP"
+  default_prompt: "Use $device-diagnostics to diagnose this device issue through the agent-cli MCP server."

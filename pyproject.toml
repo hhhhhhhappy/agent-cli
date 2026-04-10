@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-cli-mcp"
+version = "0.1.0"
+description = "MCP server that bridges remote device agent_cli commands over SSH."
+readme = "mcp-server/README.md"
+requires-python = ">=3.6"
+
+[project.scripts]
+agent-cli-mcp = "external_mcp_server.server:main"
+agent-cli-skills = "external_mcp_server.skills_installer:main"
+
+[tool.setuptools]
+packages = ["external_mcp_server", "external_mcp_server.skills"]
+
+[tool.setuptools.package-dir]
+external_mcp_server = "mcp-server"
+"external_mcp_server.skills" = "skills"
+
+[tool.setuptools.package-data]
+"external_mcp_server.skills" = ["*/SKILL.md", "*/agents/*", "*/references/*"]
