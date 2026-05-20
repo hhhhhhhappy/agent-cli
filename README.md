@@ -1,170 +1,171 @@
 # agent-cli
 
-This repository contains the host-side tooling for exposing a remote device's `agent_cli` service over SSH:
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python Version](https://img.shields.io/badge/python-%3E%3D3.6-blue.svg)](https://www.python.org/)
+[![MCP](https://img.shields.io/badge/MCP-stdio-purple.svg)](https://modelcontextprotocol.io/)
 
-- `agent-cli`: a Windows-oriented CLI for one-off commands and scripts
-- `agent-mcp`: a stdio MCP server for Claude Code and other MCP clients
-- `agent-cli-skills`: installers for the bundled Claude skills in this repository
+Host-side tooling that exposes a remote device's `agent_cli` service over SSH — built for humans and AI Agents. Inspect status, edit configuration, tail logs, run network diagnostics, push firmware, and reboot devices through a unified command surface, driven either from your shell or from an AI Agent via the bundled Claude skills.
 
-Both the CLI and the MCP server bootstrap SSH access on first use, then reuse generated keys and known_hosts data from a local runtime directory.
+[Install](#installation--quick-start) · [AI Agent Skills](#agent-skills) · [Devices](#device-configuration) · [Commands](#operations) · [Transport Options](#transport-options) · [Security](#security--risk-warnings-read-before-use) · [Contributing](#contributing)
 
-Detailed component docs:
+## Why agent-cli?
 
-- [cli/README.md](cli/README.md)
-- [mcp-server/README.md](mcp-server/README.md)
+- **Agent-Native Design** — Five structured [Skills](#agent-skills) out of the box. Claude Code and other AI Agents call `agent-cli` through the Bash tool with zero extra prompting.
+- **Zero-Touch SSH Bootstrap** — First call generates keys, trusts the host, and reuses a persistent session. No manual `ssh-copy-id`, no per-call reconnect.
+- **Schema-Backed Safety** — `config set` is preflighted against the device's own schema; destructive operations (`upgrade`, `reboot`) are isolated under a separate safety tier.
+- **Multi-Device Out of the Box** — Repeat `--device` flags or point at a JSON config file to manage a fleet from one process.
+- **Two Transports, One Backend** — Use the `agent-cli` shell command by default; switch to the `agent-mcp` MCP server when you want structured tool calls from an MCP-native client. Skills auto-detect which transport is available.
 
-## Highlights
+## Features
 
-- Seven remote operation groups: `status`, `config`, `log`, `schema`, `tool`, `upgrade`, `reboot`
-- Fixed read-only MCP resources for discovery: `status/basic`, `status/list`, `config/list`, `schema/list`, `log/list`, `tool/list`
-- Zero-touch SSH bootstrap with local OpenSSH tools
-- Inline multi-device setup with repeated `--device` flags
-- Optional JSON config files for saved device definitions
-- Persistent per-device SSH sessions instead of reconnecting on every call
-- Schema-backed preflight validation for `config set`
-- Bundled Claude skills for inspection, configuration, diagnostics, and operations
+| Group     | Capabilities                                                                       |
+| --------- | ---------------------------------------------------------------------------------- |
+| `status`  | Read aggregated device status, list available keys, or query a single area         |
+| `config`  | `config get` reads the running config; `config set` applies a root-level payload   |
+| `log`     | Tail the default `message` log or read a named service log                         |
+| `schema`  | List schema roots, fetch one root, or return validation rules for `config set`     |
+| `tool`    | Network diagnostics: `ping`, `traceroute`, `tcpdump`, `iperf`, `speedtest`         |
+| `upgrade` | Firmware upgrade from URL or via local file upload                                 |
+| `reboot`  | Immediate device reboot                                                            |
 
-## Packages
+## Installation & Quick Start
 
-| Package / command | Source | Purpose |
-| ----------------- | ------ | ------- |
-| `agent-cli` | `cli/` subdirectory | Windows-oriented CLI wrapper for remote `agent_cli` access |
-| `agent-mcp` | repository root package | MCP server that forwards tool calls to the device over SSH |
-| `agent-cli-skills` | repository root package | Copies bundled skills into a Claude skills directory |
+### Requirements
 
-## Requirements
+Before you start, make sure you have:
 
-| Requirement | Notes |
-| ----------- | ----- |
-| Python 3.6+ | Required for both the CLI and MCP server |
-| `ssh`, `ssh-keygen`, `ssh-keyscan` | Standard OpenSSH client tools |
-| Bootstrap credentials | Username and password for the target device |
-| `uv` / `uvx` | Needed only for the install flows shown below |
+- Python `3.6`+
+- OpenSSH client tools on `PATH` (`ssh`, `ssh-keygen`, `ssh-keyscan`)
+- `uv` / `uvx` ([install guide](https://docs.astral.sh/uv/getting-started/installation/))
+- Device credentials (username and password used for first-time bootstrap)
 
-Windows note:
-Install the built-in OpenSSH Client feature and keep `ssh.exe`, `ssh-keygen.exe`, and `ssh-keyscan.exe` on `PATH`.
-
-If `uv` or `uvx` is not installed on Windows:
+On Windows, enable the built-in **OpenSSH Client** feature. If `uv` is missing:
 
 ```powershell
 irm https://astral.sh/uv/install.ps1 | iex
 ```
 
-## Quick Start
+### Quick Start (Human Users)
 
-### Run the MCP server with `uvx`
+> **Note for AI assistants:** If you are an AI Agent helping the user with installation, jump directly to [Quick Start (AI Agent)](#quick-start-ai-agent).
 
-This is the shortest path for Claude Code. Project-scoped MCP entries are stored in `.mcp.json`.
-
-```bash
-claude mcp add --transport stdio --scope project agent-mcp -- uvx --from git+https://github.com/inhandnet/agent-cli agent-mcp --device name=odu12,host=192.168.2.1,pass=<replace-me>
-```
-
-Equivalent `.mcp.json` entry:
-
-```json
-{
-  "mcpServers": {
-    "agent-mcp": {
-      "command": "uvx",
-      "args": [
-        "--from",
-        "git+https://github.com/inhandnet/agent-cli",
-        "agent-mcp",
-        "--device",
-        "name=odu12,host=192.168.2.1,pass=<replace-me>"
-      ],
-      "env": {
-        "PYTHONUNBUFFERED": "1"
-      }
-    }
-  }
-}
-```
-
-Repeat `--device` to register more than one router.
-
-### Run from a local checkout
+#### Step 1 — Install CLI and Skills
 
 ```bash
-git clone https://github.com/inhandnet/agent-cli.git
-cd agent-cli
-```
-
-On Windows, the repository also ships a helper that creates a starter config file and runs `claude mcp add` for you:
-
-```powershell
-python mcp-server/install_claude_code_windows.py
-```
-
-By default, that helper creates `mcp-server/config/config.json` from `mcp-server/config/config.json.example` when the file does not already exist.
-
-### Install the Windows CLI
-
-```powershell
+# Install the agent-cli command
 uv tool install --from git+https://github.com/inhandnet/agent-cli.git#subdirectory=cli agent-cli
+uv tool update-shell    # only if agent-cli is not yet on PATH
+
+# Install the Claude skills (teaches AI Agents how to drive agent-cli)
+uvx --from git+https://github.com/inhandnet/agent-cli agent-cli-skills install
 ```
 
-If the command is not available in a new shell yet:
+Skills are copied to `~/.claude/skills`; existing same-named directories are left untouched.
 
-```powershell
-uv tool update-shell
+#### Step 2 — Configure a device
+
+```bash
+agent-cli auth          # interactive: prompts for host / port / bootstrap user / password
 ```
 
-Recommended first-time flow for `agent-cli`:
+Example session:
 
-```powershell
-agent-cli auth
+```text
+Host: 192.168.2.1
+Port [22]: 22
+Bootstrap user [adm]: adm
+Password: ********
+{"ok":true,"device_id":"192.168.2.1","data":{"config_path":"~/.agent-cli/config.json", ...}}
 ```
 
-`agent-cli auth` prompts for host, port, bootstrap user, and password, then saves the device profile to `~/.agent-cli/config.json`.
+The first auth call writes credentials to `~/.agent-cli/config.json`, generates an SSH keypair, and seeds `known_hosts`. Subsequent calls reuse the saved profile.
 
-After that, you can usually run commands without repeating `--device` every time:
+Pass `--name lab-ir624` to give the device a friendly id, or `--host <ip> --name <id>` to skip prompts.
 
-```powershell
+#### Step 3 — Start using
+
+In your shell:
+
+```bash
 agent-cli status basic
 agent-cli config get system.hostname
+agent-cli log message --line 200
 agent-cli schema system --validation
 ```
 
-If you prefer not to save a local config yet, you can still use inline `--device` on each command:
+Or let Claude Code drive it — the bundled skills will invoke `agent-cli` for you:
 
-Example one-off commands:
+> "Check whether `lab-ir624` is online and tail the last 100 lines of its message log."
 
-```powershell
-agent-cli --device name=lab-ir624,host=192.0.2.10,pass=replace-me status basic
-agent-cli --device name=lab-ir624,host=192.0.2.10,pass=replace-me config get system.hostname
-agent-cli --device name=lab-ir624,host=192.0.2.10,pass=replace-me schema system --validation
+### Quick Start (AI Agent)
+
+> The following steps are for AI Agents installing `agent-cli` on behalf of a user.
+
+**Step 1 — Install**
+
+```bash
+uv tool install --from git+https://github.com/inhandnet/agent-cli.git#subdirectory=cli agent-cli
+uvx --from git+https://github.com/inhandnet/agent-cli agent-cli-skills install
 ```
+
+**Step 2 — Collect device details from the user**
+
+- `host`: device IP address (required)
+- `pass`: Web login password (required)
+- *(optional)* `name`: a friendly id (defaults to the host IP)
+- *(optional)* `buser`: Web login user (default `adm`)
+- *(optional)* `port`: SSH port (default `22`)
+
+**Step 3 — Bootstrap**
+
+```bash
+agent-cli auth --host <HOST> --name <NAME>
+# user supplies password at the prompt
+```
+
+**Step 4 — Verify**
+
+```bash
+agent-cli status basic
+```
+
+A `{"ok": true, ...}` response means SSH bootstrap completed and the session is reusable.
+
+## Agent Skills
+
+Skills are Claude Code playbooks that drive `agent-cli` (or `agent-mcp`) on your behalf. They are auto-discovered from `~/.claude/skills` after `agent-cli-skills install`.
+
+| Skill                          | Description                                                                            |
+| ------------------------------ | -------------------------------------------------------------------------------------- |
+| `agent-cli-shared`             | Shared prompts, device selection, error recovery, transport auto-detection             |
+| `agent-cli-inspect`            | Read-only inspection: status, config, log tailing                                       |
+| `agent-cli-config`             | Schema-aware configuration changes with `config set` preflight                          |
+| `agent-cli-device-diagnostics` | Network diagnostics workflows (`ping`, `traceroute`, `tcpdump`, `iperf`, `speedtest`)   |
+| `agent-cli-operate`            | Firmware upgrade and reboot (destructive — requires explicit human approval)            |
+
+Each skill ships transport references for both [CLI](skills/agent-cli-shared/references/transport-cli.md) and [MCP](skills/agent-cli-shared/references/transport-mcp.md), and selects the one available in the current environment.
 
 ## Device Configuration
 
 ### Inline `--device` format
 
-Every `--device` value uses this format:
+Used for the MCP server and one-off CLI calls:
 
 ```text
 name=<id>,host=<host>,pass=<password>[,buser=<user>][,port=<port>]
 ```
 
-| Field | Required | Default | Description |
-| ----- | :------: | ------- | ----------- |
-| `name` | yes | - | Logical device id |
-| `host` | yes | - | Device IP address |
-| `pass` | yes | - | Bootstrap password used during first-time key registration |
-| `buser` | no | `adm` | Device Web Login user name |
-| `port` | no | `22` | SSH port |
+| Field   | Required | Default | Description           |
+| ------- |:--------:| ------- | --------------------- |
+| `name`  | yes      | -       | Logical device id     |
+| `host`  | yes      | -       | Device IP address     |
+| `pass`  | yes      | -       | Web login password    |
+| `buser` | no       | `adm`   | Web login user        |
+| `port`  | no       | `22`    | SSH port              |
 
-Runtime directories:
+Runtime directories: `~/.agent-cli/` for the CLI, `~/.agent-mcp/` for the MCP server. Generated keys, host metadata, and session state are written there on first use.
 
-- `agent-cli` defaults to `~/.agent-cli/`
-- `agent-mcp` defaults to `~/.agent-mcp/`
-
-On first use, the selected runtime directory stores generated keys, host metadata, and session state.
-
-### JSON config file format
-
-If you prefer saved device definitions instead of inline `--device` flags, use `--config` with a JSON file:
+### JSON config file
 
 ```json
 {
@@ -172,84 +173,122 @@ If you prefer saved device definitions instead of inline `--device` flags, use `
     "lab-ir624": {
       "host": "192.168.2.1",
       "bootstrap_user": "adm",
-      "bootstrap_password": "<replace-me>"
+      "bootstrap_password": "<your-device-password>"
     }
   }
 }
 ```
 
-Example:
-
 ```bash
 agent-mcp --config /path/to/devices.json
 ```
 
-## Supported Operations
+## Operations
 
-| Group | Notes |
-| ----- | ----- |
-| `status` | Read aggregated status, list status keys, or query one status area |
-| `config` | `config get` is read-only; `config set` applies root-level payloads |
-| `log` | Reads the default `message` log or named services |
-| `schema` | Lists schema roots, reads one root, or shows validation rules |
-| `tool` | Diagnostics including `ping`, `traceroute`, `tcpdump`, `iperf`, and `speedtest` |
-| `upgrade` | Firmware upgrade from a URL or local file upload |
-| `reboot` | Immediate device reboot |
+| Group     | Notes                                                               |
+| --------- | ------------------------------------------------------------------- |
+| `status`  | Read aggregated status, list keys, or query one area                |
+| `config`  | `config get` is read-only; `config set` applies root-level payloads |
+| `log`     | Reads the default `message` log or a named service                  |
+| `schema`  | Lists schema roots, reads one root, or returns validation rules     |
+| `tool`    | Diagnostics: `ping`, `traceroute`, `tcpdump`, `iperf`, `speedtest`  |
+| `upgrade` | Firmware upgrade from URL or local file upload                      |
+| `reboot`  | Immediate device reboot                                             |
 
-Operational safety levels:
+### Safety levels
 
-| Level | Operations | Notes |
-| ----- | ---------- | ----- |
-| Read-only | `status`, `config get`, `log`, `schema` | Safe at any time |
-| Diagnostic | `tool` | Can consume bandwidth or system resources |
-| Change | `config set` | Validate with `schema <root> --validation` first |
-| Destructive | `upgrade`, `reboot` | Use only with explicit approval |
+| Level       | Operations                              | Notes                                            |
+| ----------- | --------------------------------------- | ------------------------------------------------ |
+| Read-only   | `status`, `config get`, `log`, `schema` | Always safe                                      |
+| Diagnostic  | `tool`                                  | May consume bandwidth or CPU                     |
+| Change      | `config set`                            | Validate with `schema <root> --validation` first |
+| Destructive | `upgrade`, `reboot`                     | Use only with explicit approval                  |
 
-## Bundled Claude Skills
+## Transport Options
 
-Install the bundled skills into the default Claude skills directory:
+`agent-cli` ships two transports backed by the same SSH bridge and command surface. Pick the one that matches your AI client:
+
+### CLI transport (default)
+
+Skills invoke the `agent-cli` binary through Claude Code's Bash tool. This is the default — once Step 1 above is done, you're already on this path.
+
+**Use it when:** You want a single binary on `PATH`, you switch between multiple AI tools, or your client has no MCP support.
+
+### MCP transport (optional)
+
+Register `agent-mcp` as a stdio MCP server so MCP-native clients call structured tools instead of shell commands.
 
 ```bash
-uvx --from git+https://github.com/inhandnet/agent-cli agent-cli-skills install
+claude mcp add --transport stdio --scope project agent-mcp -- \
+  uvx --from git+https://github.com/inhandnet/agent-cli agent-mcp \
+  --device name=odu12,host=192.168.2.1,pass=<your-device-password>
 ```
 
-Or use the alias intended for one-command Claude setups:
+Equivalent `.mcp.json`:
 
-```bash
-uvx --from git+https://github.com/inhandnet/agent-cli agent-cli-claude-skills
+```json
+{
+  "mcpServers": {
+    "agent-mcp": {
+      "command": "uvx",
+      "args": [
+        "--from", "git+https://github.com/inhandnet/agent-cli",
+        "agent-mcp",
+        "--device", "name=odu12,host=192.168.2.1,pass=<your-device-password>"
+      ],
+      "env": { "PYTHONUNBUFFERED": "1" }
+    }
+  }
+}
 ```
 
-Default destination: `~/.claude/skills`
+The MCP server also exposes a fixed set of read-only resources:
 
-Bundled skill directories:
+```text
+status/basic   status/list   config/list   schema/list   log/list   tool/list
+```
 
-- `agent-cli-config`
-- `agent-cli-device-diagnostics`
-- `agent-cli-inspect`
-- `agent-cli-operate`
-- `agent-cli-shared`
+By default the MCP server writes diagnostic events to stderr only (your MCP client captures them in its own log). To also persist them to `~/.agent-mcp/logs/agent-mcp.log`, pass `--log-file` or set `AGENT_MCP_LOG_FILE=1`:
 
-The installer does not overwrite an existing same-named skill directory.
+```json
+"env": { "AGENT_MCP_LOG_FILE": "1", "PYTHONUNBUFFERED": "1" }
+```
+
+**Use it when:** Your client (Claude Code, Cursor, Claude Desktop) supports MCP and you prefer structured tool calls and finer-grained permission prompts over shell invocation.
+
+On Windows, `python mcp-server/install_claude_code_windows.py` will run `claude mcp add` for you and seed a starter `mcp-server/config/config.json` if none exists.
+
+## Security & Risk Warnings (Read Before Use)
+
+This tool can be invoked by AI Agents to operate remote network devices over SSH. AI Agents carry inherent risks such as model hallucinations, unpredictable execution, and prompt injection. Once you authorize `agent-cli` with device credentials, an Agent acts under your identity within the authorized scope, and may produce high-risk outcomes including configuration drift, loss of connectivity, or unintended firmware operations. Please use with caution.
+
+To reduce these risks, `agent-cli` enables default protections at multiple layers — schema-backed preflight for `config set`, an explicit safety tier for `upgrade` / `reboot`, and a separation of read-only resources from mutating tools. However, these risks still exist. We strongly recommend that you:
+
+- Treat `upgrade` and `reboot` as destructive operations and require explicit human approval at the Agent level.
+- Validate every `config set` with `schema <root> --validation` first.
+- Keep device credentials out of shell history and source control; prefer the JSON config file with appropriate file permissions.
+
+Please fully understand the risks before use. By using this tool you are deemed to voluntarily assume all related responsibilities.
 
 ## Repository Layout
 
 ```text
 agent-cli/
-|-- cli/
+|-- cli/                    # agent-cli (CLI transport)
 |   |-- cli.py
 |   |-- command_surface.py
-|   |-- config_preflight.py
+|   |-- ssh_bridge.py
 |   |-- tests/
 |   `-- README.md
-|-- mcp-server/
+|-- mcp-server/             # agent-mcp (MCP transport)
 |   |-- server.py
 |   |-- ssh_bridge.py
-|   |-- install_claude_code_windows.py
 |   |-- skills_installer.py
+|   |-- install_claude_code_windows.py
 |   |-- config/
 |   |-- tests/
 |   `-- README.md
-|-- skills/
+|-- skills/                 # Bundled Claude skills
 |   |-- agent-cli-config/
 |   |-- agent-cli-device-diagnostics/
 |   |-- agent-cli-inspect/
@@ -257,5 +296,16 @@ agent-cli/
 |   `-- agent-cli-shared/
 |-- pyproject.toml
 |-- setup.py
+|-- LICENSE
 `-- README.md
 ```
+
+See [cli/README.md](cli/README.md) and [mcp-server/README.md](mcp-server/README.md) for component-level details.
+
+## Contributing
+
+Community contributions are welcome. If you find a bug or have a feature suggestion, please open an [Issue](https://github.com/inhandnet/agent-cli/issues) or [Pull Request](https://github.com/inhandnet/agent-cli/pulls). For major changes, we recommend opening an Issue first to discuss the approach.
+
+## License
+
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.

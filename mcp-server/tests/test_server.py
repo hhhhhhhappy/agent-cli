@@ -2504,6 +2504,7 @@ class ServerCliEntryPointTest(unittest.TestCase):
                                 "name=lab-a,host=192.0.2.10,pass=secret",
                                 "--runtime-dir",
                                 runtime_dir,
+                                "--log-file",
                             ]
                         )
 
@@ -2513,4 +2514,32 @@ class ServerCliEntryPointTest(unittest.TestCase):
             logs = handle.read()
         self.assertIn("diagnostic logging initialized", logs)
         self.assertIn("probe stderr", logs)
+        bridge.close.assert_called_once()
+
+    def test_main_does_not_write_log_file_by_default(self):
+        bridge = mock.Mock()
+        stderr_buffer = io.StringIO()
+        runtime_dir = os.path.join(self.temp_dir, "runtime-default")
+        log_path = _resolve_server_log_path(runtime_dir)
+
+        def fake_serve(server, stdin_handle, stdout_handle, stderr_handle):
+            del server, stdin_handle, stdout_handle
+            stderr_handle.write("probe stderr\n")
+            stderr_handle.flush()
+
+        with mock.patch("external_mcp_server.server.SSHBridge.from_config_data", return_value=bridge):
+            with mock.patch("external_mcp_server.server.serve", side_effect=fake_serve):
+                with mock.patch("external_mcp_server.server._build_stream", side_effect=lambda handle, mode: handle):
+                    with mock.patch("sys.stderr", stderr_buffer):
+                        result = main(
+                            [
+                                "--device",
+                                "name=lab-a,host=192.0.2.10,pass=secret",
+                                "--runtime-dir",
+                                runtime_dir,
+                            ]
+                        )
+
+        self.assertEqual(result, 0)
+        self.assertFalse(os.path.exists(log_path))
         bridge.close.assert_called_once()

@@ -2431,6 +2431,18 @@ def parse_args(argv):
         ),
     )
     parser.add_argument("--takeover", action="store_true", help="Force takeover when another MCP server currently holds the device lease.")
+    parser.add_argument(
+        "--log-file",
+        action="store_true",
+        default=os.environ.get("AGENT_MCP_LOG_FILE") == "1",
+        help=(
+            "Write diagnostic events to {0} in addition to stderr. "
+            "Off by default; events still go to stderr (captured by your MCP client). "
+            "Also enabled when AGENT_MCP_LOG_FILE=1.".format(
+                os.path.join(_resolve_log_dir(DEFAULT_RUNTIME_DIR), DEFAULT_SERVER_LOG_FILE_NAME)
+            )
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -2474,17 +2486,18 @@ def main(argv=None):
     log_path = _resolve_server_log_path(log_runtime_dir)
     log_file_handle = None
     log_writer = stderr_handle
-    try:
-        log_path, log_file_handle = _open_server_log_file(log_runtime_dir)
-        log_writer = _MultiWriter(stderr_handle, log_file_handle)
-    except (IOError, OSError) as exc:
+    if options.log_file:
         try:
-            stderr_handle.write(
-                "Warning: unable to open MCP diagnostic log file {0}: {1}\n".format(log_path, exc)
-            )
-            stderr_handle.flush()
-        except (AttributeError, IOError, OSError, ValueError):
-            pass
+            log_path, log_file_handle = _open_server_log_file(log_runtime_dir)
+            log_writer = _MultiWriter(stderr_handle, log_file_handle)
+        except (IOError, OSError) as exc:
+            try:
+                stderr_handle.write(
+                    "Warning: unable to open MCP diagnostic log file {0}: {1}\n".format(log_path, exc)
+                )
+                stderr_handle.flush()
+            except (AttributeError, IOError, OSError, ValueError):
+                pass
 
     server = ExternalCliMCPServer(bridge)
     server.set_log_handle(log_writer)
