@@ -1,0 +1,3 @@
+include mcp-server/README.md
+recursive-include mcp-server/config *
+recursive-include skills *

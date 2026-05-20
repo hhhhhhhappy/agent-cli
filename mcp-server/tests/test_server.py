@@ -13,27 +13,53 @@ from external_mcp_server.server import (
     DEFAULT_PROJECT_CONFIG_PATH,
     DEFAULT_RUNTIME_CONTROL_PATH_DIR_NAME,
     DEFAULT_RUNTIME_KEYS_DIR_NAME,
+    DEFAULT_UPGRADE_TIMEOUT_SEC,
     EXIT_BADARGS,
     EXIT_NOTFOUND,
     ERR_INTERNAL,
     ERR_INVALID_PARAMS,
+    MAX_UPGRADE_TIMEOUT_SEC,
     ERR_NOT_INITIALIZED,
+    _HTTPAPIError,
+    _SSHProcessSocket,
+    _SSHProcessStream,
+    _SSHStreamError,
+    _SSHTunnelError,
     _build_inline_config,
     _parse_device_spec,
+    _resolve_server_log_path,
     ExternalCliMCPServer,
     main,
     parse_args,
 )
-from external_mcp_server.ssh_bridge import ConfigError
+from external_mcp_server.ssh_bridge import BootstrapError, ConfigError
 
 
 class FakeBridge(object):
     def __init__(self, device_ids=None, responder=None):
         self.calls = []
+        self.bound_devices = []
         if device_ids is None:
             device_ids = ["device-a"]
-        self.devices = {device_id: True for device_id in device_ids}
+        self.devices = {
+            device_id: {
+                "host": "192.0.2.10",
+                "user": "agent",
+                "identity_file": "/tmp/agent-key",
+                "bootstrap_user": "adm",
+                "bootstrap_password": "secret",
+                "port": 22,
+            }
+            for device_id in device_ids
+        }
+        self.ssh_defaults = {
+            "command_timeout_sec": 30,
+            "connect_timeout_sec": 5,
+            "known_hosts_file": "/tmp/known_hosts",
+        }
+        self.ssh_bin = "ssh"
         self.responder = responder
+        self.binding_error = None
 
     def has_device(self, device_id):
         return device_id in self.devices
@@ -46,6 +72,11 @@ class FakeBridge(object):
         if len(device_ids) == 1:
             return device_ids[0]
         return None
+
+    def _ensure_binding(self, device_id):
+        if self.binding_error is not None:
+            raise self.binding_error
+        self.bound_devices.append(device_id)
 
     def execute(self, device_id, verb=None, target=None, args=None, timeout_sec=None, command=None):
         call = {
@@ -78,10 +109,143 @@ class FakeBridge(object):
         }
 
 
+class FakeTunnel(object):
+    def __init__(self):
+        self.entered = False
+        self.exited = False
+
+    def __enter__(self):
+        self.entered = True
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        del exc_type, exc, tb
+        self.exited = True
+        return False
+
+
+class FakeUploadConnection(object):
+    def __init__(self, send_side_effect=None):
+        self.requests = []
+        self.headers = []
+        self.sent = []
+        self.closed = False
+        self._send_side_effect = send_side_effect
+
+    def putrequest(self, method, path, skip_host=False, skip_accept_encoding=False):
+        self.requests.append(
+            {
+                "method": method,
+                "path": path,
+                "skip_host": skip_host,
+                "skip_accept_encoding": skip_accept_encoding,
+            }
+        )
+
+    def putheader(self, name, value):
+        self.headers.append((name, value))
+
+    def endheaders(self):
+        return None
+
+    def send(self, payload):
+        if self._send_side_effect is not None:
+            effect = self._send_side_effect
+            if isinstance(effect, list):
+                if effect:
+                    current = effect.pop(0)
+                    if isinstance(current, Exception):
+                        raise current
+            elif isinstance(effect, Exception):
+                raise effect
+        self.sent.append(payload)
+
+    def close(self):
+        self.closed = True
+
+
+class FakeJSONConnection(object):
+    def __init__(self):
+        self.requests = []
+        self.closed = False
+
+    def request(self, method, path, body=None, headers=None):
+        self.requests.append(
+            {
+                "method": method,
+                "path": path,
+                "body": body,
+                "headers": headers,
+            }
+        )
+
+    def close(self):
+        self.closed = True
+
+
+class FakeUploadTunnel(object):
+    def __init__(self, connection):
+        self.connection = connection
+
+    def open_http_connection(self, timeout_sec):
+        del timeout_sec
+        return self.connection
+
+
+class _ClosedResponseProcess(object):
+    def __init__(self, payload):
+        self.stdin = io.BytesIO()
+        self.stdout = io.BytesIO(payload)
+        self.stderr = io.BytesIO()
+        self._running = True
+
+    def poll(self):
+        return None if self._running else 0
+
+    def terminate(self):
+        self._running = False
+        return None
+
+    def wait(self, timeout=None):
+        del timeout
+        self._running = False
+        return 0
+
+    def kill(self):
+        self._running = False
+        return None
+
+
+class SSHHTTPTransportTest(unittest.TestCase):
+    def test_socket_close_does_not_close_active_response_reader(self):
+        process = _ClosedResponseProcess(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+        stream = _SSHProcessStream.__new__(_SSHProcessStream)
+        stream.process = process
+        stream._stderr_handle = process.stderr
+        stream._stderr_chunks = []
+        stream._stderr_thread = None
+        stream._response_reader_count = 0
+        stream._close_requested = False
+
+        socket_handle = _SSHProcessSocket(stream)
+        response_reader = socket_handle.makefile("rb")
+
+        socket_handle.close()
+
+        self.assertFalse(response_reader.closed)
+        self.assertEqual(response_reader.read(), b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+        response_reader.close()
+        self.assertTrue(process.stdout.closed)
+
+
 class ExternalCliMCPServerTest(unittest.TestCase):
     def setUp(self):
+        self.temp_dir = tempfile.mkdtemp(prefix="mcp-server-test-")
         self.bridge = FakeBridge()
         self.server = ExternalCliMCPServer(self.bridge)
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
 
     def _initialize_server(self):
         self.server.process_message(
@@ -739,6 +903,474 @@ class ExternalCliMCPServerTest(unittest.TestCase):
         self.assertEqual(self.bridge.calls[0]["command"], "reboot")
         self.assertNotIn("isError", response["result"])
 
+    def test_upgrade_tool_call_with_file_path_uploads_then_triggers_remote_upgrade(self):
+        self._initialize_server()
+        firmware_path = os.path.join(self.temp_dir, "fw.bin")
+        with open(firmware_path, "wb") as handle:
+            handle.write(b"firmware")
+        fake_tunnel = FakeTunnel()
+
+        with mock.patch.object(self.server, "_open_api_tunnel", return_value=fake_tunnel) as tunnel_mock:
+            with mock.patch.object(self.server, "_api_login", return_value="token-123") as login_mock:
+                with mock.patch.object(self.server, "_api_upload_firmware", return_value={"result": "ok"}) as upload_mock:
+                    with mock.patch.object(self.server, "_api_trigger_upgrade", return_value={"result": "ok"}) as upgrade_mock:
+                        response = self.server.process_message(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": 2,
+                                "method": "tools/call",
+                                "params": {
+                                    "name": "upgrade",
+                                    "arguments": {
+                                        "device_id": "device-a",
+                                        "source_type": "file",
+                                        "file_path": firmware_path,
+                                    },
+                                },
+                            }
+                        )
+
+        self.assertEqual(self.bridge.bound_devices, ["device-a"])
+        self.assertEqual(self.bridge.calls, [])
+        self.assertTrue(fake_tunnel.entered)
+        self.assertTrue(fake_tunnel.exited)
+        tunnel_mock.assert_called_once_with("device-a", DEFAULT_UPGRADE_TIMEOUT_SEC)
+        login_mock.assert_called_once_with(
+            fake_tunnel,
+            "192.0.2.10",
+            "adm",
+            "secret",
+            DEFAULT_UPGRADE_TIMEOUT_SEC,
+        )
+        upload_mock.assert_called_once_with(
+            fake_tunnel,
+            "192.0.2.10",
+            "token-123",
+            firmware_path,
+            DEFAULT_UPGRADE_TIMEOUT_SEC,
+        )
+        upgrade_mock.assert_called_once_with(
+            fake_tunnel,
+            "192.0.2.10",
+            "token-123",
+            DEFAULT_UPGRADE_TIMEOUT_SEC,
+        )
+        self.assertNotIn("isError", response["result"])
+        self.assertEqual(response["result"]["structuredContent"]["command"], "upgrade --file {0}".format(firmware_path))
+        self.assertEqual(response["result"]["structuredContent"]["data"]["result"], "ok")
+
+    def test_api_upload_firmware_matches_browser_form_field_and_headers(self):
+        self._initialize_server()
+        firmware_path = os.path.join(self.temp_dir, "fw.bin")
+        with open(firmware_path, "wb") as handle:
+            handle.write(b"firmware")
+        connection = FakeUploadConnection()
+        tunnel = FakeUploadTunnel(connection)
+
+        with mock.patch.object(self.server, "_read_http_response", return_value={"result": "ok"}):
+            payload = self.server._api_upload_firmware(
+                tunnel,
+                "192.0.2.10",
+                "token-123",
+                firmware_path,
+                30,
+            )
+
+        self.assertEqual(payload, {"result": "ok"})
+        self.assertEqual(
+            connection.requests,
+            [
+                {
+                    "method": "POST",
+                    "path": "/api/v1/import/firmware",
+                    "skip_host": True,
+                    "skip_accept_encoding": True,
+                }
+            ],
+        )
+        self.assertTrue(connection.closed)
+        self.assertIn(("Remote-Addr", "127.0.0.1"), connection.headers)
+        self.assertIn(("Accept", "*/*"), connection.headers)
+        self.assertIn(("Connection", "keep-alive"), connection.headers)
+        self.assertIn(("Origin", "https://192.0.2.10"), connection.headers)
+        self.assertIn(("Referer", "https://192.0.2.10/"), connection.headers)
+        self.assertIn(("X-Requested-With", "XMLHttpRequest"), connection.headers)
+        sent_payload = b"".join(connection.sent)
+        self.assertIn(b'name="file"', sent_payload)
+        self.assertNotIn(b'name="firmware"', sent_payload)
+
+    def test_http_json_request_matches_browser_login_headers(self):
+        self._initialize_server()
+        connection = FakeJSONConnection()
+        tunnel = FakeUploadTunnel(connection)
+
+        with mock.patch.object(self.server, "_read_http_response", return_value={"result": "ok"}):
+            payload = self.server._http_json_request(
+                tunnel,
+                "POST",
+                "/api/v1/user/login",
+                {"Host": "192.0.2.10"},
+                {"username": "adm", "password": "secret"},
+                30,
+            )
+
+        self.assertEqual(payload, {"result": "ok"})
+        self.assertTrue(connection.closed)
+        self.assertEqual(len(connection.requests), 1)
+        request = connection.requests[0]
+        self.assertEqual(request["method"], "POST")
+        self.assertEqual(request["path"], "/api/v1/user/login")
+        self.assertEqual(request["body"], b'{"password":"secret","username":"adm"}')
+        self.assertEqual(request["headers"]["Host"], "192.0.2.10")
+        self.assertEqual(request["headers"]["Accept"], "*/*")
+        self.assertEqual(request["headers"]["Connection"], "keep-alive")
+        self.assertEqual(request["headers"]["Remote-Addr"], "127.0.0.1")
+        self.assertEqual(request["headers"]["X-Requested-With"], "XMLHttpRequest")
+        self.assertEqual(request["headers"]["Origin"], "https://192.0.2.10")
+        self.assertEqual(request["headers"]["Referer"], "https://192.0.2.10/")
+        self.assertEqual(request["headers"]["Content-Type"], "application/json")
+
+    def test_api_upload_firmware_prefers_early_http_error_over_generic_stream_failure(self):
+        self._initialize_server()
+        firmware_path = os.path.join(self.temp_dir, "fw.bin")
+        with open(firmware_path, "wb") as handle:
+            handle.write(b"firmware")
+        connection = FakeUploadConnection(send_side_effect=[None, _SSHStreamError("stream closed")])
+        tunnel = FakeUploadTunnel(connection)
+        expected_error = _HTTPAPIError("bad_args", "http_upload_failed", "firmware too large")
+
+        with mock.patch.object(self.server, "_try_read_upload_error_response", return_value=expected_error) as read_error_mock:
+            with self.assertRaises(_HTTPAPIError) as raised:
+                self.server._api_upload_firmware(
+                    tunnel,
+                    "192.0.2.10",
+                    "token-123",
+                    firmware_path,
+                    30,
+                )
+
+        self.assertIs(raised.exception, expected_error)
+        read_error_mock.assert_called_once_with(connection)
+
+    def test_upgrade_tool_call_with_file_path_rejects_missing_local_file(self):
+        self._initialize_server()
+        firmware_path = os.path.join(self.temp_dir, "missing.bin")
+
+        response = self.server.process_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "upgrade",
+                    "arguments": {
+                        "device_id": "device-a",
+                        "source_type": "file",
+                        "file_path": firmware_path,
+                    },
+                },
+            }
+        )
+
+        self.assertTrue(response["result"]["isError"])
+        self.assertEqual(response["result"]["structuredContent"]["error"]["kind"], "local_file_not_found")
+        self.assertEqual(self.bridge.calls, [])
+
+    def test_upgrade_tool_call_with_windows_file_path_uses_translated_posix_mount(self):
+        self._initialize_server()
+        raw_path = r"D:\2204_open\fw.bin"
+        translated_path = "/mnt/d/2204_open/fw.bin"
+        fake_tunnel = FakeTunnel()
+
+        with mock.patch.object(self.server, "_resolve_local_upgrade_path", return_value=("/worktree/D:\\2204_open\\fw.bin", translated_path)):
+            with mock.patch("external_mcp_server.server.os.path.exists", side_effect=lambda path: path == translated_path):
+                with mock.patch("external_mcp_server.server.os.path.isfile", side_effect=lambda path: path == translated_path):
+                    with mock.patch("external_mcp_server.server.os.access", side_effect=lambda path, mode: path == translated_path and mode == os.R_OK):
+                        with mock.patch("external_mcp_server.server.os.path.getsize", return_value=8):
+                            with mock.patch.object(self.server, "_open_api_tunnel", return_value=fake_tunnel):
+                                with mock.patch.object(self.server, "_api_login", return_value="token-123"):
+                                    with mock.patch.object(self.server, "_api_upload_firmware", return_value={"result": "ok"}) as upload_mock:
+                                        with mock.patch.object(self.server, "_api_trigger_upgrade", return_value={"result": "ok"}):
+                                            response = self.server.process_message(
+                                                {
+                                                    "jsonrpc": "2.0",
+                                                    "id": 2,
+                                                    "method": "tools/call",
+                                                    "params": {
+                                                        "name": "upgrade",
+                                                        "arguments": {
+                                                            "device_id": "device-a",
+                                                            "source_type": "file",
+                                                            "file_path": raw_path,
+                                                        },
+                                                    },
+                                                }
+                                            )
+
+        upload_mock.assert_called_once_with(
+            fake_tunnel,
+            "192.0.2.10",
+            "token-123",
+            translated_path,
+            DEFAULT_UPGRADE_TIMEOUT_SEC,
+        )
+        self.assertNotIn("isError", response["result"])
+
+    def test_upgrade_tool_call_logs_progress_to_stderr_handle(self):
+        self._initialize_server()
+        firmware_path = os.path.join(self.temp_dir, "fw.bin")
+        with open(firmware_path, "wb") as handle:
+            handle.write(b"firmware")
+        fake_tunnel = FakeTunnel()
+        log_buffer = io.StringIO()
+        self.server.set_log_handle(log_buffer)
+
+        with mock.patch.object(self.server, "_open_api_tunnel", return_value=fake_tunnel):
+            with mock.patch.object(self.server, "_api_login", return_value="token-123"):
+                with mock.patch.object(self.server, "_api_upload_firmware", return_value={"result": "ok"}):
+                    with mock.patch.object(self.server, "_api_trigger_upgrade", return_value={"result": "ok"}):
+                        response = self.server.process_message(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": 2,
+                                "method": "tools/call",
+                                "params": {
+                                    "name": "upgrade",
+                                    "arguments": {
+                                        "device_id": "device-a",
+                                        "source_type": "file",
+                                        "file_path": firmware_path,
+                                    },
+                                },
+                            }
+                        )
+
+        logs = log_buffer.getvalue()
+        self.assertIn("starting file upgrade", logs)
+        self.assertIn("local file ready", logs)
+        self.assertIn("starting API login", logs)
+        self.assertIn("starting firmware upload", logs)
+        self.assertIn("firmware upload completed", logs)
+        self.assertIn("triggering remote upgrade", logs)
+        self.assertIn("file upgrade request completed", logs)
+        self.assertNotIn("isError", response["result"])
+
+    def test_upgrade_tool_call_logs_login_failure_to_stderr_handle(self):
+        self._initialize_server()
+        firmware_path = os.path.join(self.temp_dir, "fw.bin")
+        with open(firmware_path, "wb") as handle:
+            handle.write(b"firmware")
+        fake_tunnel = FakeTunnel()
+        log_buffer = io.StringIO()
+        self.server.set_log_handle(log_buffer)
+
+        with mock.patch.object(self.server, "_open_api_tunnel", return_value=fake_tunnel):
+            with mock.patch.object(
+                self.server,
+                "_api_login",
+                side_effect=_HTTPAPIError("unauthorized", "http_login_failed", "bad password"),
+            ):
+                response = self.server.process_message(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "upgrade",
+                            "arguments": {
+                                "device_id": "device-a",
+                                "source_type": "file",
+                                "file_path": firmware_path,
+                            },
+                        },
+                    }
+                )
+
+        logs = log_buffer.getvalue()
+        self.assertIn("starting API login", logs)
+        self.assertIn("HTTP API error during upgrade", logs)
+        self.assertIn("stage=\"login\"", logs)
+        self.assertIn("error_kind=\"http_login_failed\"", logs)
+        self.assertTrue(response["result"]["isError"])
+
+    def test_upgrade_tool_call_with_file_path_path_inspection_error_returns_local_error(self):
+        self._initialize_server()
+        firmware_path = os.path.join(self.temp_dir, "fw.bin")
+
+        with mock.patch.object(self.server, "_resolve_local_upgrade_path", return_value=(firmware_path, None)):
+            with mock.patch("external_mcp_server.server.os.path.exists", side_effect=ValueError("bad path")):
+                response = self.server.process_message(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "upgrade",
+                            "arguments": {
+                                "device_id": "device-a",
+                                "source_type": "file",
+                                "file_path": firmware_path,
+                            },
+                        },
+                    }
+                )
+
+        self.assertTrue(response["result"]["isError"])
+        self.assertEqual(response["result"]["structuredContent"]["error"]["kind"], "local_file_invalid")
+        self.assertEqual(self.bridge.calls, [])
+
+    def test_upgrade_tool_call_with_file_path_stops_when_login_fails(self):
+        self._initialize_server()
+        firmware_path = os.path.join(self.temp_dir, "fw.bin")
+        with open(firmware_path, "wb") as handle:
+            handle.write(b"firmware")
+        fake_tunnel = FakeTunnel()
+
+        with mock.patch.object(self.server, "_open_api_tunnel", return_value=fake_tunnel):
+            with mock.patch.object(
+                self.server,
+                "_api_login",
+                side_effect=_HTTPAPIError("unauthorized", "http_login_failed", "bad password"),
+            ):
+                with mock.patch.object(self.server, "_api_upload_firmware") as upload_mock:
+                    with mock.patch.object(self.server, "_api_trigger_upgrade") as upgrade_mock:
+                        response = self.server.process_message(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": 2,
+                                "method": "tools/call",
+                                "params": {
+                                    "name": "upgrade",
+                                    "arguments": {
+                                        "device_id": "device-a",
+                                        "source_type": "file",
+                                        "file_path": firmware_path,
+                                    },
+                                },
+                            }
+                        )
+
+        self.assertTrue(response["result"]["isError"])
+        self.assertEqual(response["result"]["structuredContent"]["error"]["kind"], "http_login_failed")
+        upload_mock.assert_not_called()
+        upgrade_mock.assert_not_called()
+        self.assertEqual(self.bridge.calls, [])
+
+    def test_upgrade_tool_call_with_explicit_timeout_uses_override(self):
+        self._initialize_server()
+        firmware_path = os.path.join(self.temp_dir, "fw.bin")
+        with open(firmware_path, "wb") as handle:
+            handle.write(b"firmware")
+        fake_tunnel = FakeTunnel()
+
+        with mock.patch.object(self.server, "_open_api_tunnel", return_value=fake_tunnel) as tunnel_mock:
+            with mock.patch.object(self.server, "_api_login", return_value="token-123") as login_mock:
+                with mock.patch.object(self.server, "_api_upload_firmware", return_value={"result": "ok"}) as upload_mock:
+                    with mock.patch.object(self.server, "_api_trigger_upgrade", return_value={"result": "ok"}) as upgrade_mock:
+                        response = self.server.process_message(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": 2,
+                                "method": "tools/call",
+                                "params": {
+                                    "name": "upgrade",
+                                    "arguments": {
+                                        "device_id": "device-a",
+                                        "source_type": "file",
+                                        "file_path": firmware_path,
+                                        "timeout_sec": 900,
+                                    },
+                                },
+                            }
+                        )
+
+        tunnel_mock.assert_called_once_with("device-a", 900)
+        login_mock.assert_called_once_with(fake_tunnel, "192.0.2.10", "adm", "secret", 900)
+        upload_mock.assert_called_once_with(fake_tunnel, "192.0.2.10", "token-123", firmware_path, 900)
+        upgrade_mock.assert_called_once_with(fake_tunnel, "192.0.2.10", "token-123", 900)
+        self.assertNotIn("isError", response["result"])
+
+    def test_upgrade_tool_call_with_file_path_returns_tunnel_error(self):
+        self._initialize_server()
+        firmware_path = os.path.join(self.temp_dir, "fw.bin")
+        with open(firmware_path, "wb") as handle:
+            handle.write(b"firmware")
+
+        with mock.patch.object(
+            self.server,
+            "_open_api_tunnel",
+            side_effect=_SSHTunnelError("tunnel down", stderr="ssh failed"),
+        ):
+            response = self.server.process_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "upgrade",
+                        "arguments": {
+                            "device_id": "device-a",
+                            "source_type": "file",
+                            "file_path": firmware_path,
+                        },
+                    },
+                }
+            )
+
+        self.assertTrue(response["result"]["isError"])
+        self.assertEqual(response["result"]["structuredContent"]["error"]["kind"], "ssh_tunnel_error")
+        self.assertEqual(response["result"]["structuredContent"]["stderr"], "ssh failed")
+
+    def test_upgrade_tool_call_with_file_path_returns_bridge_binding_error(self):
+        self._initialize_server()
+        firmware_path = os.path.join(self.temp_dir, "fw.bin")
+        with open(firmware_path, "wb") as handle:
+            handle.write(b"firmware")
+        self.bridge.binding_error = BootstrapError("bootstrap_auth_error", "bad bootstrap password", stderr="denied")
+
+        response = self.server.process_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "upgrade",
+                    "arguments": {
+                        "device_id": "device-a",
+                        "source_type": "file",
+                        "file_path": firmware_path,
+                    },
+                },
+            }
+        )
+
+        self.assertTrue(response["result"]["isError"])
+        self.assertEqual(response["result"]["structuredContent"]["error"]["code"], "unauthorized")
+        self.assertEqual(response["result"]["structuredContent"]["error"]["kind"], "bootstrap_auth_error")
+        self.assertEqual(response["result"]["structuredContent"]["stderr"], "denied")
+
+    def test_upgrade_tool_call_with_url_executes_bridge(self):
+        self._initialize_server()
+
+        response = self.server.process_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "upgrade",
+                    "arguments": {
+                        "device_id": "device-a",
+                        "source_type": "url",
+                        "url": "https://example.test/fw.bin",
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(self.bridge.calls[0]["command"], "upgrade --url https://example.test/fw.bin")
+        self.assertNotIn("isError", response["result"])
+
     def test_tool_speedtest_start_subcommand_executes_bridge(self):
         self._initialize_server()
 
@@ -1014,6 +1646,119 @@ class ExternalCliMCPServerTest(unittest.TestCase):
 
         self.assertEqual(response["error"]["code"], ERR_INVALID_PARAMS)
 
+    def test_upgrade_tool_rejects_legacy_subcommand(self):
+        self._initialize_server()
+
+        response = self.server.process_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "upgrade",
+                    "arguments": {
+                        "device_id": "device-a",
+                        "subcommand": "--url https://example.test/fw.bin",
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(response["error"]["code"], ERR_INVALID_PARAMS)
+        self.assertEqual(response["error"]["message"], "Unknown argument: subcommand")
+
+    def test_upgrade_tool_rejects_missing_file_path(self):
+        self._initialize_server()
+
+        response = self.server.process_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "upgrade",
+                    "arguments": {
+                        "device_id": "device-a",
+                        "source_type": "file",
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(response["error"]["code"], ERR_INVALID_PARAMS)
+        self.assertEqual(response["error"]["message"], "file_path must be a non-empty string")
+
+    def test_upgrade_tool_rejects_url_for_file_source(self):
+        self._initialize_server()
+
+        response = self.server.process_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "upgrade",
+                    "arguments": {
+                        "device_id": "device-a",
+                        "source_type": "file",
+                        "file_path": "/tmp/fw.bin",
+                        "url": "https://example.test/fw.bin",
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(response["error"]["code"], ERR_INVALID_PARAMS)
+        self.assertEqual(response["error"]["message"], "url is not supported when source_type is `file`")
+
+    def test_upgrade_tool_rejects_invalid_url_scheme(self):
+        self._initialize_server()
+
+        response = self.server.process_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "upgrade",
+                    "arguments": {
+                        "device_id": "device-a",
+                        "source_type": "url",
+                        "url": "ftp://example.test/fw.bin",
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(response["error"]["code"], ERR_INVALID_PARAMS)
+        self.assertEqual(response["error"]["message"], "url must be an http or https URL")
+
+    def test_upgrade_tool_rejects_timeout_beyond_upgrade_limit(self):
+        self._initialize_server()
+
+        response = self.server.process_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "upgrade",
+                    "arguments": {
+                        "device_id": "device-a",
+                        "source_type": "url",
+                        "url": "https://example.test/fw.bin",
+                        "timeout_sec": MAX_UPGRADE_TIMEOUT_SEC + 1,
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(response["error"]["code"], ERR_INVALID_PARAMS)
+        self.assertEqual(
+            response["error"]["message"],
+            "timeout_sec must be an integer between 1 and {0}".format(MAX_UPGRADE_TIMEOUT_SEC),
+        )
+
     def test_tool_call_rejects_unknown_tool(self):
         self._initialize_server()
 
@@ -1099,31 +1844,22 @@ class ExternalCliMCPServerTest(unittest.TestCase):
         self.assertNotIn("subcommand", tools["status"]["inputSchema"]["required"])
         self.assertIn("subcommand", tools["status"]["inputSchema"]["properties"])
         self.assertEqual(tools["reboot"]["inputSchema"]["required"], [])
+        self.assertEqual(tools["upgrade"]["inputSchema"]["required"], ["source_type"])
+        self.assertNotIn("subcommand", tools["upgrade"]["inputSchema"]["properties"])
+        self.assertIn("file_path", tools["upgrade"]["inputSchema"]["properties"])
+        self.assertIn("url", tools["upgrade"]["inputSchema"]["properties"])
+        self.assertEqual(tools["status"]["inputSchema"]["properties"]["timeout_sec"]["maximum"], 120)
+        self.assertEqual(
+            tools["upgrade"]["inputSchema"]["properties"]["timeout_sec"]["maximum"],
+            MAX_UPGRADE_TIMEOUT_SEC,
+        )
+        self.assertIn(
+            "machine running the MCP server",
+            tools["upgrade"]["inputSchema"]["properties"]["file_path"]["description"],
+        )
         self.assertIn(
             "Optional when the server config contains exactly one device",
             tools["status"]["inputSchema"]["properties"]["device_id"]["description"],
-        )
-
-    def test_tools_list_includes_ping_subcommand_guidance(self):
-        self._initialize_server()
-
-        response = self.server.process_message(
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/list",
-            }
-        )
-
-        tools = {tool["name"]: tool for tool in response["result"]["tools"]}
-        self.assertIn("Ping subcommands:", tools["tool"]["description"])
-        self.assertIn(
-            "Use `list` to discover diagnostics. For ping, use `ping {\"action\":\"start\",\"host\":\"8.8.8.8\"}` to begin",
-            tools["tool"]["inputSchema"]["properties"]["subcommand"]["description"],
-        )
-        self.assertIn(
-            "`ping {\"start_line\":0}` to read output",
-            tools["tool"]["inputSchema"]["properties"]["subcommand"]["description"],
         )
 
     def test_tool_list_includes_speedtest_wrapper(self):
@@ -1742,7 +2478,39 @@ class ServerCliEntryPointTest(unittest.TestCase):
         inline_config = bridge_factory.call_args[0][0]
         self.assertIn("lab-a", inline_config["devices"])
         self.assertTrue(
-            bridge_factory.call_args.kwargs["base_dir"].endswith(".agent-cli-mcp")
+            bridge_factory.call_args.kwargs["base_dir"].endswith(".agent-mcp")
         )
         serve_mock.assert_called_once()
+        bridge.close.assert_called_once()
+
+    def test_main_writes_diagnostics_to_fixed_log_file_under_runtime_dir(self):
+        bridge = mock.Mock()
+        stderr_buffer = io.StringIO()
+        runtime_dir = os.path.join(self.temp_dir, "runtime")
+        log_path = _resolve_server_log_path(runtime_dir)
+
+        def fake_serve(server, stdin_handle, stdout_handle, stderr_handle):
+            del server, stdin_handle, stdout_handle
+            stderr_handle.write("probe stderr\n")
+            stderr_handle.flush()
+
+        with mock.patch("external_mcp_server.server.SSHBridge.from_config_data", return_value=bridge):
+            with mock.patch("external_mcp_server.server.serve", side_effect=fake_serve):
+                with mock.patch("external_mcp_server.server._build_stream", side_effect=lambda handle, mode: handle):
+                    with mock.patch("sys.stderr", stderr_buffer):
+                        result = main(
+                            [
+                                "--device",
+                                "name=lab-a,host=192.0.2.10,pass=secret",
+                                "--runtime-dir",
+                                runtime_dir,
+                            ]
+                        )
+
+        self.assertEqual(result, 0)
+        self.assertTrue(os.path.exists(log_path))
+        with io.open(log_path, "r", encoding="utf-8") as handle:
+            logs = handle.read()
+        self.assertIn("diagnostic logging initialized", logs)
+        self.assertIn("probe stderr", logs)
         bridge.close.assert_called_once()

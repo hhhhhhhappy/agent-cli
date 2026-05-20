@@ -12,7 +12,7 @@ MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_SERVER_SCRIPT_PATH = os.path.join(MODULE_DIR, "server.py")
 DEFAULT_CONFIG_PATH = os.path.join(MODULE_DIR, "config", "config.json")
 DEFAULT_CONFIG_EXAMPLE_PATH = os.path.join(MODULE_DIR, "config", "config.json.example")
-DEFAULT_SERVER_NAME = "agent-cli"
+DEFAULT_SERVER_NAME = "agent-mcp"
 DEFAULT_SCOPE = "user"
 
 

@@ -1,0 +1,9 @@
+# Agent interface definition consumed by the Claude Code skills runtime.
+# - display_name: human-readable label shown in the agent UI
+# - short_description: one-line summary for skill selection menus
+# - default_prompt: template with $skill-name variable references
+#   that the runtime resolves to the corresponding SKILL.md content.
+interface:
+  display_name: "Agent CLI Config"
+  short_description: "Read and change config safely"
+  default_prompt: "Use $agent-cli-config to inspect or update device configuration with schema and validation checks first."

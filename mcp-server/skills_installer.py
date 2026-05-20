@@ -6,7 +6,10 @@ import shutil
 import sys
 import tempfile
 
-import external_mcp_server.skills as skills_package
+try:
+    import external_mcp_server.skills as skills_package
+except ImportError:
+    import skills as skills_package
 
 
 DEFAULT_DESTINATION = os.path.join("~", ".claude", "skills")
@@ -20,24 +23,26 @@ def parse_args(argv):
     parser = argparse.ArgumentParser(
         description="Install bundled skill assets from this package."
     )
-    subparsers = parser.add_subparsers(dest="command")
-
-    install_parser = subparsers.add_parser(
-        "install",
-        help="Install all bundled skills into the destination directory.",
+    parser.add_argument(
+        "command",
+        nargs="?",
+        default="install",
+        choices=["install", "update"],
+        help="Optional subcommand. Defaults to install.",
     )
-    install_parser.add_argument(
+    parser.add_argument(
         "--dest",
         default=DEFAULT_DESTINATION,
         help=(
             "Destination skills directory. Defaults to {0}.".format(DEFAULT_DESTINATION)
         ),
     )
-
-    options = parser.parse_args(argv)
-    if options.command is None:
-        parser.error("a subcommand is required")
-    return options
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing skills (dangerous: deletes old skill directories first).",
+    )
+    return parser.parse_args(argv)
 
 
 def resolve_destination(dest):
@@ -46,9 +51,16 @@ def resolve_destination(dest):
 
 def get_bundled_skills_root(package=skills_package):
     package_file = getattr(package, "__file__", None)
-    if not package_file:
-        raise InstallError("Unable to resolve bundled skills package path")
-    return os.path.dirname(os.path.abspath(package_file))
+    if package_file:
+        return os.path.dirname(os.path.abspath(package_file))
+
+    package_path = getattr(package, "__path__", None)
+    if package_path:
+        package_paths = [os.path.abspath(path) for path in package_path if path]
+        if package_paths:
+            return package_paths[0]
+
+    raise InstallError("Unable to resolve bundled skills package path")
 
 
 def discover_bundled_skills(package=skills_package):
@@ -78,20 +90,31 @@ def _prepare_destination(dest):
         os.makedirs(parent_dir)
 
 
-def install_bundled_skills(dest=DEFAULT_DESTINATION, package=skills_package):
+def install_bundled_skills(dest=DEFAULT_DESTINATION, package=skills_package, force=False):
     resolved_dest = resolve_destination(dest)
     bundled_skills = discover_bundled_skills(package=package)
 
     _prepare_destination(resolved_dest)
 
+    replaced = []
     conflicts = []
     for skill_name, _source_dir in bundled_skills:
         destination_dir = os.path.join(resolved_dest, skill_name)
         if os.path.exists(destination_dir):
-            conflicts.append(destination_dir)
+            if force:
+                replaced.append(skill_name)
+            else:
+                conflicts.append(destination_dir)
 
     if conflicts:
-        raise InstallError("Skill already exists: {0}".format(conflicts[0]))
+        raise InstallError(
+            "Skill already exists: {0}. Use --force to overwrite.".format(conflicts[0])
+        )
+
+    # Remove existing skill directories before staging when force is enabled.
+    if force and replaced:
+        for skill_name in replaced:
+            shutil.rmtree(os.path.join(resolved_dest, skill_name), ignore_errors=True)
 
     staging_parent = os.path.dirname(resolved_dest) or None
     staging_root = tempfile.mkdtemp(prefix="agent-cli-skills-", dir=staging_parent)
@@ -116,14 +139,17 @@ def install_bundled_skills(dest=DEFAULT_DESTINATION, package=skills_package):
     return {
         "dest": resolved_dest,
         "skills": installed,
+        "replaced": replaced,
     }
 
 
 def print_install_summary(result, stream=None):
     stream = stream or sys.stdout
-    stream.write("Installed bundled skills into {0}\n".format(result["dest"]))
+    action = "Updated" if result.get("replaced") else "Installed"
+    stream.write("{0} bundled skills into {1}\n".format(action, result["dest"]))
     for skill_name in result["skills"]:
-        stream.write("- {0}\n".format(skill_name))
+        tag = " (replaced)" if skill_name in result.get("replaced", []) else ""
+        stream.write("- {0}{1}\n".format(skill_name, tag))
 
 
 def main(argv=None, stdout=None, stderr=None):
@@ -133,10 +159,7 @@ def main(argv=None, stdout=None, stderr=None):
 
     try:
         options = parse_args(argv)
-        if options.command != "install":
-            raise InstallError("Unsupported command: {0}".format(options.command))
-
-        result = install_bundled_skills(dest=options.dest)
+        result = install_bundled_skills(dest=options.dest, force=options.force)
         print_install_summary(result, stream=stdout)
         return 0
     except InstallError as exc:

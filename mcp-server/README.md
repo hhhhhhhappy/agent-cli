@@ -32,7 +32,7 @@ Platform notes:
 
 ## Quick Start
 
-The fastest setup path is to configure devices inline with `--device` and let the server manage runtime SSH material under `~/.agent-cli-mcp/`.
+The fastest setup path is to configure devices inline with `--device` and let the server manage runtime SSH material under `~/.agent-mcp/`.
 
 Each `--device` value uses this format:
 
@@ -51,7 +51,7 @@ Field meanings:
 
 Repeat `--device` to configure multiple devices. On first run, the server will:
 
-1. Create per-device SSH key directories under `~/.agent-cli-mcp/keys/`
+1. Create per-device SSH key directories under `~/.agent-mcp/keys/`
 2. Generate ed25519 keys with `ssh-keygen`
 3. Fetch host keys with `ssh-keyscan`
 4. Send `mcp key ensure <public_key>` over the bootstrap SSH session
@@ -71,20 +71,20 @@ python3 mcp-server/server.py \
 Run as an installed tool:
 
 ```bash
-agent-cli-mcp \
+agent-mcp \
   --device name=lab-ir624,host=192.0.2.10,pass=replace-me
 ```
 
 Install the repository's bundled skill assets into the default `~/.claude/skills` location:
 
 ```bash
-agent-cli-skills install
+agent-cli-skills
 ```
 
 Run the installer through `uvx` after publishing the repository:
 
 ```bash
-uvx --from git+https://github.com/inhandnet/agent-cli agent-cli-skills install
+uvx --from git+https://github.com/inhandnet/agent-cli agent-cli-claude-skills
 ```
 
 Use `--dest /path/to/skills` to copy the bundled skills into a different directory.
@@ -92,23 +92,28 @@ Use `--dest /path/to/skills` to copy the bundled skills into a different directo
 Force takeover of an existing device lease:
 
 ```bash
-agent-cli-mcp \
+agent-mcp \
   --device name=lab-ir624,host=192.0.2.10,pass=replace-me \
   --takeover
 ```
 
 ## Bundled Skills
 
-The published package currently ships one bundled skill:
+The published package currently ships these bundled skills:
 
-- `device-diagnostics`
+- `agent-cli-config`
+- `agent-cli-device-diagnostics`
+- `agent-cli-inspect`
+- `agent-cli-operate`
+- `agent-cli-shared`
 
 Install behavior:
 
-- `agent-cli-skills install` copies all bundled skills into `~/.claude/skills` by default
-- `agent-cli-skills install --dest /path/to/skills` overrides the destination directory
+- `agent-cli-skills` copies all bundled skills into `~/.claude/skills` by default
+- `agent-cli-claude-skills` is a direct alias for one-command `uvx` installs into Claude Code
+- `agent-cli-skills --dest /path/to/skills` overrides the destination directory
 - if the target already contains a same-named skill directory, the installer fails and does not overwrite it
-- installing skills is separate from configuring the MCP server; `agent-cli-mcp` still needs to be added to Claude Code or `.mcp.json` independently
+- installing skills is separate from configuring the MCP server; `agent-mcp` still needs to be added to Claude Code or `.mcp.json` independently
 
 ## Configure In Claude Code
 
@@ -125,12 +130,12 @@ Once this repository is on GitHub, Claude Code can launch it directly via `uvx` 
 ```json
 {
   "mcpServers": {
-    "agent-cli": {
+    "agent-mcp": {
       "command": "uvx",
       "args": [
         "--from",
         "git+https://github.com/inhandnet/agent-cli",
-        "agent-cli-mcp",
+        "agent-mcp",
         "--device",
         "name=lab-ir624,host=192.0.2.10,pass=replace-me"
       ],
@@ -147,12 +152,12 @@ Add more devices by repeating the pair:
 ```json
 {
   "mcpServers": {
-    "agent-cli": {
+    "agent-mcp": {
       "command": "uvx",
       "args": [
         "--from",
         "git+https://github.com/inhandnet/agent-cli",
-        "agent-cli-mcp",
+        "agent-mcp",
         "--device",
         "name=lab-a,host=192.0.2.10,pass=replace-me",
         "--device",
@@ -174,8 +179,8 @@ Notes:
 Use this when you want Claude Code to create `.mcp.json` for you:
 
 ```bash
-claude mcp add --transport stdio --scope project agent-cli -- \
-  uvx --from git+https://github.com/inhandnet/agent-cli agent-cli-mcp \
+claude mcp add --transport stdio --scope project agent-mcp -- \
+  uvx --from git+https://github.com/inhandnet/agent-cli agent-mcp \
   --device name=lab-ir624,host=192.0.2.10,pass=replace-me
 ```
 
@@ -217,7 +222,7 @@ Start from `config/config.json.example`:
 Then run:
 
 ```bash
-agent-cli-mcp --config /path/to/devices.json
+agent-mcp --config /path/to/devices.json
 ```
 
 Notes:
@@ -247,6 +252,7 @@ reboot
 
 The `status` MCP tool forwards to remote `status` when `subcommand` is omitted, or to `status <subcommand>` when it is provided.
 The `config` MCP tool forwards to remote `config list`, `config get ...`, and `config set ...`.
+The `upgrade` MCP tool uses structured arguments instead of a free-form `subcommand`.
 
 Example `status` call:
 
@@ -318,9 +324,24 @@ Example `upgrade` call:
 ```json
 {
   "device_id": "lab-ir624",
-  "subcommand": "--url https://example.invalid/fw.bin"
+  "source_type": "url",
+  "url": "https://example.invalid/fw.bin"
 }
 ```
+
+Upgrade with a local file on the machine running the MCP server:
+
+```json
+{
+  "device_id": "lab-ir624",
+  "source_type": "file",
+  "file_path": "/tmp/fw.bin"
+}
+```
+
+When `source_type` is `file`, the MCP server validates the local file, uploads it to the device API, and then triggers the upgrade. Use `source_type: "url"` when the device should download the firmware itself.
+
+`upgrade` does not expose a separate status call. A successful return means the device accepted and ran the current upgrade request; confirm the final firmware version after the device reconnects with `status basic`.
 
 Example `reboot` call:
 

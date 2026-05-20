@@ -1,0 +1,9 @@
+# Agent interface definition consumed by the Claude Code skills runtime.
+# - display_name: human-readable label shown in the agent UI
+# - short_description: one-line summary for skill selection menus
+# - default_prompt: template with $skill-name variable references
+#   that the runtime resolves to the corresponding SKILL.md content.
+interface:
+  display_name: "Agent CLI Inspect"
+  short_description: "Read status, logs, and firmware info"
+  default_prompt: "Use $agent-cli-inspect to inspect this device through status, logs, or firmware information without changing anything."

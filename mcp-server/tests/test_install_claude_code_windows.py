@@ -66,7 +66,7 @@ class ClaudeCodeWindowsInstallerTest(unittest.TestCase):
     def test_build_claude_add_command_uses_stdio_scope(self):
         command = installer.build_claude_add_command(
             "claude",
-            "agent-cli",
+            "agent-mcp",
             "project",
             ["py", "-3", self.server_path, "--config", self.config_path],
         )
@@ -81,7 +81,7 @@ class ClaudeCodeWindowsInstallerTest(unittest.TestCase):
                 "stdio",
                 "--scope",
                 "project",
-                "agent-cli",
+                "agent-mcp",
                 "--",
                 "py",
                 "-3",
@@ -104,7 +104,7 @@ class ClaudeCodeWindowsInstallerTest(unittest.TestCase):
             return _CompletedProcess(returncode=0)
 
         result = installer.install(
-            server_name="agent-cli",
+            server_name="agent-mcp",
             config_path=self.config_path,
             config_example_path=self.config_example_path,
             server_script_path=self.server_path,
@@ -128,7 +128,7 @@ class ClaudeCodeWindowsInstallerTest(unittest.TestCase):
                 "stdio",
                 "--scope",
                 "project",
-                "agent-cli",
+                "agent-mcp",
                 "--",
                 "py",
                 "-3",
@@ -152,7 +152,7 @@ class ClaudeCodeWindowsInstallerTest(unittest.TestCase):
             json.dump({"devices": {}}, handle)
 
         result = installer.install(
-            server_name="agent-cli",
+            server_name="agent-mcp",
             config_path=self.config_path,
             config_example_path=self.config_example_path,
             server_script_path=self.server_path,
@@ -182,7 +182,7 @@ class ClaudeCodeWindowsInstallerTest(unittest.TestCase):
             json.dump({"devices": {}}, handle)
 
         result = installer.install(
-            server_name="agent-cli",
+            server_name="agent-mcp",
             config_path=self.config_path,
             config_example_path=self.config_example_path,
             server_script_path=self.server_path,
@@ -213,7 +213,7 @@ class ClaudeCodeWindowsInstallerTest(unittest.TestCase):
 
         with self.assertRaises(installer.InstallError) as context:
             installer.install(
-                server_name="agent-cli",
+                server_name="agent-mcp",
                 config_path=self.config_path,
                 config_example_path=self.config_example_path,
                 server_script_path=self.server_path,

@@ -666,7 +666,7 @@ class SSHBridgeTest(unittest.TestCase):
             self.assertNotIn("text", kwargs)
             self.assertEqual(kwargs["stdout"], subprocess.PIPE)
             self.assertEqual(kwargs["stderr"], subprocess.PIPE)
-            self.assertEqual(kwargs["timeout"], 30)
+            self.assertEqual(kwargs["timeout"], 60)
 
             if command[0] == "ssh-keygen":
                 identity_file = command[command.index("-f") + 1]
