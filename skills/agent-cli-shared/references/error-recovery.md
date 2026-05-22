@@ -10,7 +10,7 @@ Centralized error patterns and recovery strategies for all `agent-cli-*` skills.
 
 | Symptom | Likely Cause | Recovery |
 |---------|-------------|----------|
-| `SSH connection refused` | Device SSH service down or wrong port | Verify host and port. Try `agent-cli auth --host <host>` to reconfigure. |
+| `SSH connection refused` | Device SSH service down or wrong port | Verify device IP and port. Try `agent-cli auth --device-ip <ip>` to reconfigure. |
 | `SSH connection timeout` | Device unreachable, firewall block, or wrong IP | Check IP reachability from the agent host first (local `ping`). If unreachable, the device may be offline — switch to `agent-cli-inspect` via MCP if available. |
 | `Connection reset by peer` | Device mid-restart or SSH session limit | Wait 30s and retry. If persistent, check if the device is rebooting via MCP `status basic` if available. |
 | `Could not resolve hostname` | DNS failure on agent host | Use direct IP address instead of hostname. |
@@ -22,7 +22,7 @@ Centralized error patterns and recovery strategies for all `agent-cli-*` skills.
 |---------|-------------|----------|
 | `Permission denied (publickey)` | SSH key not authorized on device | Re-run `agent-cli auth` to re-bootstrap key exchange. |
 | `Authentication failed` | Wrong password or expired credentials | Re-run `agent-cli auth` with correct credentials. |
-| `Bad credentials` | Stored credentials invalid | Re-bootstrap with `agent-cli auth --host <host> --name <id>`. |
+| `Bad credentials` | Stored credentials invalid | Re-bootstrap with `agent-cli auth --device-ip <ip> --name <id> --overwrite`. |
 | MCP `401` on vendor API | Missing or wrong `x-api-key`, `origin`, or `referer` header | Verify all 4 headers from [inhand-release-api.md](inhand-release-api.md). Do not treat as evidence of missing product. |
 
 ### 3. Configuration Errors

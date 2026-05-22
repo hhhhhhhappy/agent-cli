@@ -1,9 +1,9 @@
 {
   "devices": {
     "lab-ir624": {
-      "host": "192.0.2.10",
-      "bootstrap_user": "adm",
-      "bootstrap_password": "replace-me"
+      "device_ip": "192.0.2.10",
+      "user": "adm",
+      "pass": "replace-me"
     }
   }
 }

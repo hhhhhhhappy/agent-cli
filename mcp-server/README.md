@@ -37,16 +37,16 @@ The fastest setup path is to configure devices inline with `--device` and let th
 Each `--device` value uses this format:
 
 ```text
-name=<id>,host=<host>,pass=<password>[,buser=<user>][,user=<user>][,port=<port>]
+name=<id>,device_ip=<ip>,pass=<password>[,user=<web_user>][,agent_user=<agent_user>][,port=<port>]
 ```
 
 Field meanings:
 
 - `name`: required logical device id used as `device_id` in MCP tool calls
-- `host`: required device address
-- `pass`: required bootstrap password
-- `buser`: optional bootstrap SSH username, defaults to `adm`
-- `user`: optional runtime SSH username, defaults to `agent`
+- `device_ip`: required device IP address
+- `pass`: required web admin password (used once to install the SSH key)
+- `user`: optional web admin username, defaults to `adm`
+- `agent_user`: optional runtime SSH username installed after bootstrap, defaults to `agent`
 - `port`: optional SSH port, defaults to `22`
 
 Repeat `--device` to configure multiple devices. On first run, the server will:
@@ -65,14 +65,14 @@ Run directly from a Git checkout:
 
 ```bash
 python3 mcp-server/server.py \
-  --device name=lab-ir624,host=192.0.2.10,pass=replace-me
+  --device name=lab-ir624,device_ip=192.0.2.10,pass=replace-me
 ```
 
 Run as an installed tool:
 
 ```bash
 agent-mcp \
-  --device name=lab-ir624,host=192.0.2.10,pass=replace-me
+  --device name=lab-ir624,device_ip=192.0.2.10,pass=replace-me
 ```
 
 Install the repository's bundled skill assets into the default `~/.claude/skills` location:
@@ -93,7 +93,7 @@ Force takeover of an existing device lease:
 
 ```bash
 agent-mcp \
-  --device name=lab-ir624,host=192.0.2.10,pass=replace-me \
+  --device name=lab-ir624,device_ip=192.0.2.10,pass=replace-me \
   --takeover
 ```
 
@@ -137,7 +137,7 @@ Once this repository is on GitHub, Claude Code can launch it directly via `uvx` 
         "git+https://github.com/inhandnet/agent-cli",
         "agent-mcp",
         "--device",
-        "name=lab-ir624,host=192.0.2.10,pass=replace-me"
+        "name=lab-ir624,device_ip=192.0.2.10,pass=replace-me"
       ],
       "env": {
         "PYTHONUNBUFFERED": "1"
@@ -159,9 +159,9 @@ Add more devices by repeating the pair:
         "git+https://github.com/inhandnet/agent-cli",
         "agent-mcp",
         "--device",
-        "name=lab-a,host=192.0.2.10,pass=replace-me",
+        "name=lab-a,device_ip=192.0.2.10,pass=replace-me",
         "--device",
-        "name=lab-b,host=192.0.2.11,pass=replace-me,buser=ops,port=2222"
+        "name=lab-b,device_ip=192.0.2.11,pass=replace-me,user=ops,port=2222"
       ]
     }
   }
@@ -181,7 +181,7 @@ Use this when you want Claude Code to create `.mcp.json` for you:
 ```bash
 claude mcp add --transport stdio --scope project agent-mcp -- \
   uvx --from git+https://github.com/inhandnet/agent-cli agent-mcp \
-  --device name=lab-ir624,host=192.0.2.10,pass=replace-me
+  --device name=lab-ir624,device_ip=192.0.2.10,pass=replace-me
 ```
 
 `--scope project` stores the configuration in the current project's `.mcp.json`. Use `--scope local` or `--scope user` if you want a different scope.
@@ -211,9 +211,9 @@ Start from `config/config.json.example`:
 {
   "devices": {
     "lab-ir624": {
-      "host": "192.0.2.10",
-      "bootstrap_user": "adm",
-      "bootstrap_password": "replace-me"
+      "device_ip": "192.0.2.10",
+      "user": "adm",
+      "pass": "replace-me"
     }
   }
 }
@@ -227,7 +227,7 @@ agent-mcp --config /path/to/devices.json
 
 Notes:
 
-- The config JSON may contain secrets such as `bootstrap_password`, so it must be readable only by the current user: `chmod 600 /path/to/devices.json`.
+- The config JSON may contain secrets such as `pass`, so it must be readable only by the current user: `chmod 600 /path/to/devices.json`.
 - Relative paths are resolved relative to the config file location.
 - `known_hosts_file` must already exist when you use manual key configuration.
 - `identity_file` and its `.pub` counterpart must already exist when you do not use auto-generated keys.

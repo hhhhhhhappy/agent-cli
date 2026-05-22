@@ -28,11 +28,11 @@ class FakeBridge(object):
         self.ssh_bin = "ssh"
         self.devices = {
             "lab-a": {
-                "host": "192.0.2.10",
-                "user": "agent",
+                "device_ip": "192.0.2.10",
+                "agent_user": "agent",
                 "identity_file": "/tmp/device_key",
-                "bootstrap_user": "adm",
-                "bootstrap_password": "secret",
+                "user": "adm",
+                "pass": "secret",
                 "port": 22,
             }
         }
@@ -47,13 +47,13 @@ class FakeBridge(object):
             "ssh_defaults": dict(self.ssh_defaults),
             "devices": {
                 "lab-a": {
-                    "host": "192.0.2.10",
-                    "user": "agent",
+                    "device_ip": "192.0.2.10",
+                    "agent_user": "agent",
                     "identity_file": "/tmp/device_key",
                     "public_key_file": "/tmp/device_key.pub",
                     "public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest agent-cli",
-                    "bootstrap_user": "adm",
-                    "bootstrap_password": "secret",
+                    "user": "adm",
+                    "pass": "secret",
                     "port": 22,
                 }
             },
@@ -230,7 +230,7 @@ class RouterCliTests(unittest.TestCase):
                     "--runtime-dir",
                     self.temp_dir,
                     "auth",
-                    "--host",
+                    "--device-ip",
                     "192.0.2.10",
                     "--pass",
                     "secret",
@@ -246,8 +246,8 @@ class RouterCliTests(unittest.TestCase):
         config_path = os.path.join(self.temp_dir, "config.json")
         with open(config_path, "r") as handle:
             payload = json.load(handle)
-        self.assertEqual(payload["devices"]["lab-a"]["host"], "192.0.2.10")
-        self.assertEqual(payload["devices"]["lab-a"]["bootstrap_password"], "secret")
+        self.assertEqual(payload["devices"]["lab-a"]["device_ip"], "192.0.2.10")
+        self.assertEqual(payload["devices"]["lab-a"]["pass"], "secret")
         self.assertEqual(
             payload["ssh_defaults"]["keys_base_dir"],
             os.path.join(self.temp_dir, "keys"),
@@ -263,7 +263,7 @@ class RouterCliTests(unittest.TestCase):
         app = RouterCli(
             stdout=self.stdout,
             stderr=self.stderr,
-            stdin=io.StringIO("192.0.2.10\n\n\n"),
+            stdin=io.StringIO("192.0.2.10\n\n\n\n"),
             password_reader=lambda prompt: password_prompts.append(prompt) or "secret",
         )
 
@@ -279,19 +279,20 @@ class RouterCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(fake_bridge.bound_devices, ["192.0.2.10"])
         self.assertTrue(fake_bridge.closed)
-        self.assertEqual(password_prompts, ["Password: "])
+        self.assertEqual(password_prompts, ["Web login password: "])
 
         config_path = os.path.join(self.temp_dir, "config.json")
         with open(config_path, "r") as handle:
             payload = json.load(handle)
 
-        self.assertEqual(payload["devices"]["192.0.2.10"]["host"], "192.0.2.10")
+        self.assertEqual(payload["devices"]["192.0.2.10"]["device_ip"], "192.0.2.10")
         self.assertEqual(payload["devices"]["192.0.2.10"]["port"], 22)
-        self.assertEqual(payload["devices"]["192.0.2.10"]["bootstrap_user"], "adm")
-        self.assertEqual(payload["devices"]["192.0.2.10"]["bootstrap_password"], "secret")
-        self.assertIn("Host: ", self.stderr.getvalue())
-        self.assertIn("Port [22]: ", self.stderr.getvalue())
-        self.assertIn("Bootstrap user [adm]: ", self.stderr.getvalue())
+        self.assertEqual(payload["devices"]["192.0.2.10"]["user"], "adm")
+        self.assertEqual(payload["devices"]["192.0.2.10"]["pass"], "secret")
+        self.assertIn("Device IP address:", self.stderr.getvalue())
+        self.assertIn("SSH port [22]: ", self.stderr.getvalue())
+        self.assertIn("Web login username [adm]: ", self.stderr.getvalue())
+        self.assertIn("Device name [192.0.2.10]: ", self.stderr.getvalue())
 
         result = json.loads(self.stdout.getvalue())
         self.assertTrue(result["ok"])
@@ -313,7 +314,7 @@ class RouterCliTests(unittest.TestCase):
                     "--runtime-dir",
                     self.temp_dir,
                     "auth",
-                    "--host",
+                    "--device-ip",
                     "192.0.2.10",
                     "--user",
                     "adm2",
@@ -322,18 +323,19 @@ class RouterCliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(fake_bridge.bound_devices, ["192.0.2.10"])
-        self.assertEqual(password_prompts, ["Password: "])
-        self.assertNotIn("Host: ", self.stderr.getvalue())
-        self.assertNotIn("Port [22]: ", self.stderr.getvalue())
-        self.assertNotIn("Bootstrap user [adm]: ", self.stderr.getvalue())
+        self.assertEqual(password_prompts, ["Web login password: "])
+        self.assertNotIn("Device IP address:", self.stderr.getvalue())
+        self.assertNotIn("SSH port [22]: ", self.stderr.getvalue())
+        self.assertNotIn("Web login username [adm]: ", self.stderr.getvalue())
+        self.assertNotIn("Device name [", self.stderr.getvalue())
 
         config_path = os.path.join(self.temp_dir, "config.json")
         with open(config_path, "r") as handle:
             payload = json.load(handle)
 
-        self.assertEqual(payload["devices"]["192.0.2.10"]["bootstrap_user"], "adm2")
+        self.assertEqual(payload["devices"]["192.0.2.10"]["user"], "adm2")
         self.assertEqual(payload["devices"]["192.0.2.10"]["port"], 22)
-        self.assertEqual(payload["devices"]["192.0.2.10"]["bootstrap_password"], "secret")
+        self.assertEqual(payload["devices"]["192.0.2.10"]["pass"], "secret")
 
     def test_general_help_includes_default_behaviors_and_topics(self):
         exit_code = self.app.run(["help"])
@@ -342,7 +344,7 @@ class RouterCliTests(unittest.TestCase):
         output = self.stdout.getvalue()
         self.assertIn("status [<key>|list]", output)
         self.assertIn("tool <subcommand>", output)
-        self.assertIn("`pass=` is supported for compatibility but not recommended", output)
+        self.assertIn("`pass=` is visible in process arguments", output)
         self.assertIn("Topics:", output)
         self.assertIn("auth, status, config, log, schema, tool, upgrade, reboot", output)
         self.assertNotIn("__sessiond", output)

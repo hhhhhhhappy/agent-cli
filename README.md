@@ -65,22 +65,41 @@ Skills are copied to `~/.claude/skills`; existing same-named directories are lef
 #### Step 2 — Configure a device
 
 ```bash
-agent-cli auth          # interactive: prompts for host / port / bootstrap user / password
+agent-cli auth          # interactive: prompts for IP / SSH port / web login user / password / device name
 ```
 
 Example session:
 
 ```text
-Host: 192.168.2.1
-Port [22]: 22
-Bootstrap user [adm]: adm
-Password: ********
-{"ok":true,"device_id":"192.168.2.1","data":{"config_path":"~/.agent-cli/config.json", ...}}
+Set up access to a device. Use the same username and password you use
+to log into the device's web admin page. agent-cli only uses them once
+to install an SSH key, then connects as the agent user.
+
+Device IP address: 192.168.2.1
+SSH port [22]:
+Web login username [adm]:
+Web login password: ********
+Device name [192.168.2.1]: lab-ir624
+{"ok":true,"device_id":"lab-ir624","data":{"config_path":"~/.agent-cli/config.json", ...}}
 ```
 
 The first auth call writes credentials to `~/.agent-cli/config.json`, generates an SSH keypair, and seeds `known_hosts`. Subsequent calls reuse the saved profile.
 
-Pass `--name lab-ir624` to give the device a friendly id, or `--host <ip> --name <id>` to skip prompts.
+To skip the prompts, pass the flags directly:
+
+```bash
+agent-cli auth --device-ip 192.168.2.1 --name lab-ir624 --pass <password>
+```
+
+Manage saved devices later with:
+
+```bash
+agent-cli auth list                  # show saved devices (passwords are never returned)
+agent-cli auth remove lab-ir624      # remove one or more
+agent-cli auth remove --all          # wipe every saved device
+```
+
+Re-auth'ing an existing device name aborts unless you pass `--overwrite` (interactive runs ask first).
 
 #### Step 3 — Start using
 
@@ -110,16 +129,17 @@ uvx --from git+https://github.com/inhandnet/agent-cli agent-cli-skills install
 
 **Step 2 — Collect device details from the user**
 
-- `host`: device IP address (required)
-- `pass`: Web login password (required)
-- *(optional)* `name`: a friendly id (defaults to the host IP)
-- *(optional)* `buser`: Web login user (default `adm`)
+- `device_ip`: device IP address (required)
+- `pass`: web login password (required)
+- *(optional)* `name`: a friendly id (defaults to the device IP)
+- *(optional)* `user`: web login username (default `adm`)
+- *(optional)* `agent_user`: long-lived SSH user installed after bootstrap (default `agent`, rarely changed)
 - *(optional)* `port`: SSH port (default `22`)
 
 **Step 3 — Bootstrap**
 
 ```bash
-agent-cli auth --host <HOST> --name <NAME>
+agent-cli auth --device-ip <IP> --name <NAME>
 # user supplies password at the prompt
 ```
 
@@ -152,16 +172,17 @@ Each skill ships transport references for both [CLI](skills/agent-cli-shared/ref
 Used for the MCP server and one-off CLI calls:
 
 ```text
-name=<id>,host=<host>,pass=<password>[,buser=<user>][,port=<port>]
+name=<id>,device_ip=<ip>,pass=<password>[,user=<web_user>][,agent_user=<agent_user>][,port=<port>]
 ```
 
-| Field   | Required | Default | Description           |
-| ------- |:--------:| ------- | --------------------- |
-| `name`  | yes      | -       | Logical device id     |
-| `host`  | yes      | -       | Device IP address     |
-| `pass`  | yes      | -       | Web login password    |
-| `buser` | no       | `adm`   | Web login user        |
-| `port`  | no       | `22`    | SSH port              |
+| Field        | Required | Default | Description                                              |
+| ------------ |:--------:| ------- | -------------------------------------------------------- |
+| `name`       | yes      | -       | Logical device id                                        |
+| `device_ip`  | yes      | -       | Device IP address                                        |
+| `pass`       | yes      | -       | Web login password (used once to install the SSH key)    |
+| `user`       | no       | `adm`   | Web login username                                       |
+| `agent_user` | no       | `agent` | Long-lived SSH user installed after bootstrap            |
+| `port`       | no       | `22`    | SSH port                                                 |
 
 Runtime directories: `~/.agent-cli/` for the CLI, `~/.agent-mcp/` for the MCP server. Generated keys, host metadata, and session state are written there on first use.
 
@@ -171,9 +192,9 @@ Runtime directories: `~/.agent-cli/` for the CLI, `~/.agent-mcp/` for the MCP se
 {
   "devices": {
     "lab-ir624": {
-      "host": "192.168.2.1",
-      "bootstrap_user": "adm",
-      "bootstrap_password": "<your-device-password>"
+      "device_ip": "192.168.2.1",
+      "user": "adm",
+      "pass": "<your-device-password>"
     }
   }
 }
@@ -182,6 +203,8 @@ Runtime directories: `~/.agent-cli/` for the CLI, `~/.agent-mcp/` for the MCP se
 ```bash
 agent-mcp --config /path/to/devices.json
 ```
+
+`agent_user` and `port` are optional and fall back to `agent` / `22` when omitted.
 
 ## Operations
 
@@ -221,7 +244,7 @@ Register `agent-mcp` as a stdio MCP server so MCP-native clients call structured
 ```bash
 claude mcp add --transport stdio --scope project agent-mcp -- \
   uvx --from git+https://github.com/inhandnet/agent-cli agent-mcp \
-  --device name=odu12,host=192.168.2.1,pass=<your-device-password>
+  --device name=odu12,device_ip=192.168.2.1,pass=<your-device-password>
 ```
 
 Equivalent `.mcp.json`:
@@ -234,7 +257,7 @@ Equivalent `.mcp.json`:
       "args": [
         "--from", "git+https://github.com/inhandnet/agent-cli",
         "agent-mcp",
-        "--device", "name=odu12,host=192.168.2.1,pass=<your-device-password>"
+        "--device", "name=odu12,device_ip=192.168.2.1,pass=<your-device-password>"
       ],
       "env": { "PYTHONUNBUFFERED": "1" }
     }

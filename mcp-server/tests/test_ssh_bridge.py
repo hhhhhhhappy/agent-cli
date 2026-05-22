@@ -108,10 +108,10 @@ class SSHBridgeTest(unittest.TestCase):
             {
                 "devices": {
                     "device-a": {
-                        "host": "192.0.2.1",
+                        "device_ip": "192.0.2.1",
                         "identity_file": "./device_key",
-                        "bootstrap_user": "adm",
-                        "bootstrap_password": "secret",
+                        "user": "adm",
+                        "pass": "secret",
                     }
                 }
             }
@@ -157,16 +157,16 @@ class SSHBridgeTest(unittest.TestCase):
             {
                 "devices": {
                     "device-b": {
-                        "host": "192.0.2.2",
+                        "device_ip": "192.0.2.2",
                         "identity_file": "./device_key",
-                        "bootstrap_user": "adm",
-                        "bootstrap_password": "secret-b",
+                        "user": "adm",
+                        "pass": "secret-b",
                     },
                     "device-a": {
-                        "host": "192.0.2.1",
+                        "device_ip": "192.0.2.1",
                         "identity_file": "./device_key",
-                        "bootstrap_user": "adm",
-                        "bootstrap_password": "secret-a",
+                        "user": "adm",
+                        "pass": "secret-a",
                     }
                 }
             }
@@ -201,9 +201,9 @@ class SSHBridgeTest(unittest.TestCase):
                 },
                 "devices": {
                     "device-a": {
-                        "host": "192.0.2.1",
+                        "device_ip": "192.0.2.1",
                         "identity_file": "./device_key",
-                        "bootstrap_password": "secret",
+                        "pass": "secret",
                     }
                 },
             },
@@ -218,7 +218,7 @@ class SSHBridgeTest(unittest.TestCase):
         self.assertEqual(bridge.ssh_defaults["known_hosts_file"], os.path.join(config_dir, "known_hosts"))
         self.assertEqual(bridge.ssh_defaults["control_path_dir"], os.path.join(config_dir, "ssh-control"))
         self.assertEqual(bridge.devices["device-a"]["identity_file"], os.path.join(config_dir, "device_key"))
-        self.assertEqual(bridge.devices["device-a"]["bootstrap_user"], "adm")
+        self.assertEqual(bridge.devices["device-a"]["user"], "adm")
 
     def test_execute_accepts_full_command(self):
         factory = FakeSessionFactory(
@@ -599,10 +599,10 @@ class SSHBridgeTest(unittest.TestCase):
             {
                 "devices": {
                     "device-a": {
-                        "host": "192.0.2.1",
+                        "device_ip": "192.0.2.1",
                         "identity_file": "./device_key",
-                        "bootstrap_user": "adm",
-                        "bootstrap_password": "secret",
+                        "user": "adm",
+                        "pass": "secret",
                     }
                 }
             }
@@ -617,10 +617,10 @@ class SSHBridgeTest(unittest.TestCase):
                 {
                     "devices": {
                         "device-a": {
-                            "host": "192.0.2.1",
+                            "device_ip": "192.0.2.1",
                             "identity_file": "./device_key",
-                            "bootstrap_user": "adm",
-                            "bootstrap_password": "secret",
+                            "user": "adm",
+                            "pass": "secret",
                         }
                     }
                 },
@@ -644,9 +644,9 @@ class SSHBridgeTest(unittest.TestCase):
                 },
                 "devices": {
                     "device-a": {
-                        "host": "192.0.2.1",
-                        "bootstrap_user": "adm",
-                        "bootstrap_password": "secret",
+                        "device_ip": "192.0.2.1",
+                        "user": "adm",
+                        "pass": "secret",
                     }
                 },
             }
@@ -701,9 +701,9 @@ class SSHBridgeTest(unittest.TestCase):
                 },
                 "devices": {
                     "device-a": {
-                        "host": "192.0.2.1",
-                        "bootstrap_user": "adm",
-                        "bootstrap_password": "secret",
+                        "device_ip": "192.0.2.1",
+                        "user": "adm",
+                        "pass": "secret",
                     }
                 },
             }
@@ -755,9 +755,9 @@ class SSHBridgeTest(unittest.TestCase):
                 {
                     "devices": {
                         "device-a": {
-                            "host": "192.0.2.1",
-                            "bootstrap_user": "adm",
-                            "bootstrap_password": "secret",
+                            "device_ip": "192.0.2.1",
+                            "user": "adm",
+                            "pass": "secret",
                         }
                     }
                 },
@@ -829,9 +829,9 @@ class OpenSSHBootstrapClientTest(unittest.TestCase):
     def test_windows_bootstrap_uses_askpass_and_sends_command_over_stdin(self):
         client = _OpenSSHBootstrapClient(ssh_bin="ssh")
         profile = {
-            "bootstrap_user": "adm",
-            "bootstrap_password": "secret",
-            "host": "192.0.2.1",
+            "user": "adm",
+            "pass": "secret",
+            "device_ip": "192.0.2.1",
             "port": 22,
         }
         captured = {}

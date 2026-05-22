@@ -78,13 +78,13 @@ DEFAULT_UPGRADE_TIMEOUT_SEC = 600
 MAX_UPGRADE_TIMEOUT_SEC = 1800
 DEFAULT_AGENT_API_PORT = 4888
 LOCAL_API_REMOTE_ADDR = "127.0.0.1"
-DEVICE_SPEC_REQUIRED_FIELDS = ("name", "host", "pass")
+DEVICE_SPEC_REQUIRED_FIELDS = ("name", "device_ip", "pass")
 DEVICE_SPEC_FIELD_MAP = {
     "name": "name",
-    "host": "host",
-    "pass": "bootstrap_password",
-    "buser": "bootstrap_user",
+    "device_ip": "device_ip",
+    "pass": "pass",
     "user": "user",
+    "agent_user": "agent_user",
     "port": "port",
 }
 
@@ -577,7 +577,7 @@ class _SSHAPITunnel(object):
             "ConnectTimeout={0}".format(defaults["connect_timeout_sec"]),
             "-o",
             "LogLevel=ERROR",
-            "{0}@{1}".format(profile["user"], profile["host"]),
+            "{0}@{1}".format(profile["agent_user"], profile["device_ip"]),
         ]
 
     def open_http_connection(self, timeout_sec):
@@ -1308,7 +1308,7 @@ class ExternalCliMCPServer(object):
 
             profile = self.bridge.devices[device_id]
             timeout = timeout_sec or self.bridge.ssh_defaults["command_timeout_sec"]
-            host_header = profile["host"]
+            host_header = profile["device_ip"]
             self._log_upgrade_event(
                 "prepared API upgrade session",
                 host=host_header,
@@ -1333,8 +1333,8 @@ class ExternalCliMCPServer(object):
                     token = self._api_login(
                         tunnel,
                         host_header,
-                        profile["bootstrap_user"],
-                        profile["bootstrap_password"],
+                        profile["user"],
+                        profile["pass"],
                         timeout,
                     )
                     self._log_upgrade_event("API login completed")
@@ -1948,8 +1948,18 @@ class ExternalCliMCPServer(object):
     def _require_known_device(self, value):
         device_id = self._require_token(value, "device_id")
         if not self.bridge.has_device(device_id):
-            raise JSONRPCError(ERR_INVALID_PARAMS, "Unknown device_id")
+            raise JSONRPCError(
+                ERR_INVALID_PARAMS,
+                "Unknown device_id",
+                {"configured_device_ids": self._list_configured_device_ids()},
+            )
         return device_id
+
+    def _list_configured_device_ids(self):
+        device_ids_getter = getattr(self.bridge, "get_device_ids", None)
+        if callable(device_ids_getter):
+            return list(device_ids_getter())
+        return []
 
     def _validate_timeout(self, timeout_sec, maximum=120):
         if timeout_sec is None:
@@ -2257,9 +2267,9 @@ def _format_missing_default_config_error(config_path):
     example_payload = {
         "devices": {
             "lab-ir624": {
-                "host": "192.0.2.10",
-                "bootstrap_password": "replace-me",
-                "bootstrap_user": "adm",
+                "device_ip": "192.0.2.10",
+                "pass": "replace-me",
+                "user": "adm",
             }
         }
     }
@@ -2327,10 +2337,10 @@ def _parse_device_spec(spec):
 
     return {
         "name": parsed["name"],
-        "host": parsed["host"],
-        "user": parsed.get("user", "agent"),
-        "bootstrap_user": parsed.get("buser", "adm"),
-        "bootstrap_password": parsed["pass"],
+        "device_ip": parsed["device_ip"],
+        "agent_user": parsed.get("agent_user", "agent"),
+        "user": parsed.get("user", "adm"),
+        "pass": parsed["pass"],
         "port": port,
     }
 
@@ -2343,10 +2353,10 @@ def _build_inline_config(device_specs, runtime_dir):
         if device_id in devices:
             raise ConfigError("Duplicate device name `{0}` in --device arguments".format(device_id))
         devices[device_id] = {
-            "host": device["host"],
+            "device_ip": device["device_ip"],
+            "agent_user": device["agent_user"],
             "user": device["user"],
-            "bootstrap_user": device["bootstrap_user"],
-            "bootstrap_password": device["bootstrap_password"],
+            "pass": device["pass"],
             "port": device["port"],
         }
 
@@ -2418,7 +2428,7 @@ def parse_args(argv):
         default=[],
         help=(
             "Inline device definition: "
-            "name=<id>,host=<host>,pass=<password>[,buser=<user>][,user=<user>][,port=<port>]. "
+            "name=<id>,device_ip=<ip>,pass=<password>[,user=<web_user>][,agent_user=<agent_user>][,port=<port>]. "
             "Repeat --device to configure multiple devices without a JSON config file."
         ),
     )

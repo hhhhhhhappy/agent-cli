@@ -43,11 +43,11 @@ class FakeBridge(object):
             device_ids = ["device-a"]
         self.devices = {
             device_id: {
-                "host": "192.0.2.10",
-                "user": "agent",
+                "device_ip": "192.0.2.10",
+                "agent_user": "agent",
                 "identity_file": "/tmp/agent-key",
-                "bootstrap_user": "adm",
-                "bootstrap_password": "secret",
+                "user": "adm",
+                "pass": "secret",
                 "port": 22,
             }
             for device_id in device_ids
@@ -2362,50 +2362,50 @@ class ServerCliEntryPointTest(unittest.TestCase):
         options = parse_args(
             [
                 "--device",
-                "name=device-a,host=192.0.2.10,pass=secret",
+                "name=device-a,device_ip=192.0.2.10,pass=secret",
                 "--device",
-                "name=device-b,host=192.0.2.11,pass=secret-b,port=2222",
+                "name=device-b,device_ip=192.0.2.11,pass=secret-b,port=2222",
             ]
         )
 
         self.assertEqual(
             options.device,
             [
-                "name=device-a,host=192.0.2.10,pass=secret",
-                "name=device-b,host=192.0.2.11,pass=secret-b,port=2222",
+                "name=device-a,device_ip=192.0.2.10,pass=secret",
+                "name=device-b,device_ip=192.0.2.11,pass=secret-b,port=2222",
             ],
         )
 
     def test_parse_device_spec_accepts_short_fields(self):
-        device = _parse_device_spec("name=lab-a,host=192.0.2.10,pass=secret,buser=ops,user=agent2,port=2222")
+        device = _parse_device_spec("name=lab-a,device_ip=192.0.2.10,pass=secret,user=ops,agent_user=agent2,port=2222")
 
         self.assertEqual(
             device,
             {
                 "name": "lab-a",
-                "host": "192.0.2.10",
-                "user": "agent2",
-                "bootstrap_user": "ops",
-                "bootstrap_password": "secret",
+                "device_ip": "192.0.2.10",
+                "agent_user": "agent2",
+                "user": "ops",
+                "pass": "secret",
                 "port": 2222,
             },
         )
 
-    def test_parse_device_spec_requires_name_host_and_pass(self):
+    def test_parse_device_spec_requires_name_device_ip_and_pass(self):
         with self.assertRaisesRegex(ConfigError, "missing required field"):
-            _parse_device_spec("name=lab-a,host=192.0.2.10")
+            _parse_device_spec("name=lab-a,device_ip=192.0.2.10")
 
     def test_parse_device_spec_rejects_invalid_port(self):
         with self.assertRaisesRegex(ConfigError, "port"):
-            _parse_device_spec("name=lab-a,host=192.0.2.10,pass=secret,port=abc")
+            _parse_device_spec("name=lab-a,device_ip=192.0.2.10,pass=secret,port=abc")
 
     def test_build_inline_config_uses_runtime_dir_defaults(self):
         runtime_dir = os.path.join(self.temp_dir, "runtime")
 
         config = _build_inline_config(
             [
-                "name=lab-a,host=192.0.2.10,pass=secret",
-                "name=lab-b,host=192.0.2.11,pass=secret-b,buser=ops,port=2222",
+                "name=lab-a,device_ip=192.0.2.10,pass=secret",
+                "name=lab-b,device_ip=192.0.2.11,pass=secret-b,user=ops,port=2222",
             ],
             runtime_dir,
         )
@@ -2418,8 +2418,8 @@ class ServerCliEntryPointTest(unittest.TestCase):
             config["ssh_defaults"]["control_path_dir"],
             os.path.join(runtime_dir, DEFAULT_RUNTIME_CONTROL_PATH_DIR_NAME),
         )
-        self.assertEqual(config["devices"]["lab-a"]["bootstrap_password"], "secret")
-        self.assertEqual(config["devices"]["lab-b"]["bootstrap_user"], "ops")
+        self.assertEqual(config["devices"]["lab-a"]["pass"], "secret")
+        self.assertEqual(config["devices"]["lab-b"]["user"], "ops")
         self.assertEqual(config["devices"]["lab-b"]["port"], 2222)
 
     def test_main_reports_missing_default_config_with_minimal_example(self):
@@ -2456,7 +2456,7 @@ class ServerCliEntryPointTest(unittest.TestCase):
                     "--config",
                     "/tmp/devices.json",
                     "--device",
-                    "name=lab-a,host=192.0.2.10,pass=secret",
+                    "name=lab-a,device_ip=192.0.2.10,pass=secret",
                 ]
             )
 
@@ -2471,7 +2471,7 @@ class ServerCliEntryPointTest(unittest.TestCase):
             with mock.patch("external_mcp_server.server.serve") as serve_mock:
                 with mock.patch("external_mcp_server.server._build_stream", side_effect=lambda handle, mode: handle):
                     with mock.patch("sys.stderr", stderr_buffer):
-                        result = main(["--device", "name=lab-a,host=192.0.2.10,pass=secret"])
+                        result = main(["--device", "name=lab-a,device_ip=192.0.2.10,pass=secret"])
 
         self.assertEqual(result, 0)
         self.assertEqual(bridge_factory.call_count, 1)
@@ -2501,7 +2501,7 @@ class ServerCliEntryPointTest(unittest.TestCase):
                         result = main(
                             [
                                 "--device",
-                                "name=lab-a,host=192.0.2.10,pass=secret",
+                                "name=lab-a,device_ip=192.0.2.10,pass=secret",
                                 "--runtime-dir",
                                 runtime_dir,
                                 "--log-file",
@@ -2534,7 +2534,7 @@ class ServerCliEntryPointTest(unittest.TestCase):
                         result = main(
                             [
                                 "--device",
-                                "name=lab-a,host=192.0.2.10,pass=secret",
+                                "name=lab-a,device_ip=192.0.2.10,pass=secret",
                                 "--runtime-dir",
                                 runtime_dir,
                             ]

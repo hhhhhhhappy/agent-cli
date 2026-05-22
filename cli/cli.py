@@ -300,7 +300,7 @@ class _SSHAPITunnel(object):
             "ConnectTimeout={0}".format(defaults["connect_timeout_sec"]),
             "-o",
             "LogLevel=ERROR",
-            "{0}@{1}".format(profile["user"], profile["host"]),
+            "{0}@{1}".format(profile["agent_user"], profile["device_ip"]),
         ]
 
     def open_http_connection(self, timeout_sec):
@@ -712,6 +712,18 @@ class RouterCli(object):
             return self._write_public_outcome(outcome)
         except JSONRPCError as exc:
             print(exc.message, file=self.stderr)
+            data = exc.data if isinstance(exc.data, dict) else None
+            if data:
+                configured_ids = data.get("configured_device_ids")
+                if isinstance(configured_ids, list) and configured_ids:
+                    print(
+                        "Configured devices: {0}".format(", ".join(str(x) for x in configured_ids)),
+                        file=self.stderr,
+                    )
+                    print(
+                        "Pass --device-id <name> to select one, or run `agent-cli auth list` for details.",
+                        file=self.stderr,
+                    )
             return self._exit_code_from_error_code("bad_args")
         finally:
             bridge.close()
@@ -749,17 +761,31 @@ class RouterCli(object):
         return EXIT_OK
 
     def _run_auth(self, options):
+        auth_args = list(getattr(options, "auth_args", None) or [])
+        if auth_args:
+            action = auth_args[0]
+            if action == "list":
+                return self._run_auth_list(options, auth_args[1:])
+            if action == "remove":
+                return self._run_auth_remove(options, auth_args[1:])
+            print(
+                "Unknown auth subcommand: {0}. Use `list`, `remove <name>`, or omit for bootstrap.".format(action),
+                file=self.stderr,
+            )
+            return EXIT_BADARGS
+
         runtime_dir = self._resolve_runtime_dir(options.runtime_dir)
         config_path = self._resolve_config_path(options.config, runtime_dir)
         takeover = bool(options.auth_takeover or options.takeover)
+        existing_names = self._read_existing_device_names(config_path)
 
         try:
-            self._collect_auth_options(options)
+            self._collect_auth_options(options, existing_names=existing_names)
         except ConfigError as exc:
             print("Configuration error: {0}".format(exc), file=self.stderr)
             return EXIT_BADARGS
 
-        device_name = options.name or options.host
+        device_name = options.name
         device_spec = self._build_auth_device_spec(options, device_name)
         inline_config = build_inline_config([device_spec], runtime_dir)
 
@@ -806,13 +832,154 @@ class RouterCli(object):
                 "data": {
                     "config_path": config_path,
                     "runtime_dir": runtime_dir,
-                    "host": options.host,
+                    "device_ip": options.device_ip,
                     "port": options.port,
-                    "bootstrap_user": options.user,
+                    "user": options.user,
                     "agent_user": options.agent_user,
                 },
             }
         )
+        return EXIT_OK
+
+    def _run_auth_list(self, options, extra):
+        if extra:
+            print("auth list does not accept additional arguments", file=self.stderr)
+            return EXIT_BADARGS
+
+        runtime_dir = self._resolve_runtime_dir(options.runtime_dir)
+        config_path = self._resolve_config_path(options.config, runtime_dir)
+
+        devices = []
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r") as handle:
+                    payload = json.load(handle)
+            except (IOError, OSError, ValueError) as exc:
+                print("Configuration error: {0}".format(exc), file=self.stderr)
+                return EXIT_BADARGS
+
+            raw_devices = payload.get("devices") if isinstance(payload, dict) else None
+            if isinstance(raw_devices, dict):
+                for name in sorted(raw_devices.keys()):
+                    entry = raw_devices[name]
+                    if not isinstance(entry, dict):
+                        continue
+                    devices.append({
+                        "name": name,
+                        "device_ip": entry.get("device_ip"),
+                        "port": entry.get("port"),
+                        "agent_user": entry.get("agent_user"),
+                        "user": entry.get("user"),
+                    })
+
+        self._write_json({
+            "ok": True,
+            "data": {
+                "config_path": config_path,
+                "runtime_dir": runtime_dir,
+                "devices": devices,
+            },
+        })
+        return EXIT_OK
+
+    def _run_auth_remove(self, options, extra):
+        remove_all = False
+        names = []
+        seen = set()
+        for arg in extra:
+            if arg == "--all":
+                remove_all = True
+                continue
+            if not arg or arg.startswith("-"):
+                print("auth remove does not accept argument: {0}".format(arg), file=self.stderr)
+                return EXIT_BADARGS
+            if arg in seen:
+                continue
+            seen.add(arg)
+            names.append(arg)
+
+        if remove_all and names:
+            print("auth remove --all does not accept device names", file=self.stderr)
+            return EXIT_BADARGS
+        if not remove_all and not names:
+            print(
+                "auth remove requires one or more device names, or --all to remove every saved device",
+                file=self.stderr,
+            )
+            return EXIT_BADARGS
+
+        runtime_dir = self._resolve_runtime_dir(options.runtime_dir)
+        config_path = self._resolve_config_path(options.config, runtime_dir)
+
+        if not os.path.exists(config_path):
+            self._write_json({
+                "ok": False,
+                "error": {
+                    "code": "not_found",
+                    "kind": "config_missing",
+                    "message": "config file does not exist: {0}".format(config_path),
+                },
+            })
+            return EXIT_NOTFOUND
+
+        try:
+            with open(config_path, "r") as handle:
+                payload = json.load(handle)
+        except (IOError, OSError, ValueError) as exc:
+            print("Configuration error: {0}".format(exc), file=self.stderr)
+            return EXIT_BADARGS
+
+        if not isinstance(payload, dict):
+            print("Configuration error: top-level config must be a JSON object", file=self.stderr)
+            return EXIT_BADARGS
+
+        raw_devices = payload.get("devices")
+        devices = raw_devices if isinstance(raw_devices, dict) else {}
+
+        if remove_all:
+            removed = sorted(devices.keys())
+            payload["devices"] = {}
+            self._write_config_file(config_path, payload)
+            self._write_json({
+                "ok": True,
+                "data": {
+                    "config_path": config_path,
+                    "removed": removed,
+                    "remaining_devices": [],
+                },
+            })
+            return EXIT_OK
+
+        missing = [n for n in names if n not in devices]
+        if missing:
+            self._write_json({
+                "ok": False,
+                "error": {
+                    "code": "not_found",
+                    "kind": "device_not_found",
+                    "message": "device(s) not saved in {0}: {1}".format(config_path, ", ".join(missing)),
+                    "details": {"missing": missing},
+                },
+            })
+            return EXIT_NOTFOUND
+
+        remaining = dict(devices)
+        for name in names:
+            del remaining[name]
+        payload["devices"] = remaining
+        self._write_config_file(config_path, payload)
+
+        result = {
+            "ok": True,
+            "data": {
+                "config_path": config_path,
+                "removed": list(names),
+                "remaining_devices": sorted(remaining.keys()),
+            },
+        }
+        if len(names) == 1:
+            result["device_id"] = names[0]
+        self._write_json(result)
         return EXIT_OK
 
     def _run_session_manager(self, options):
@@ -1061,24 +1228,35 @@ class RouterCli(object):
     def _default_password_reader(self, prompt):
         return getpass.getpass(prompt=prompt, stream=self.stderr)
 
-    def _collect_auth_options(self, options):
+    def _collect_auth_options(self, options, existing_names=None):
+        if existing_names is None:
+            existing_names = set()
+
         prompt_all_auth_fields = (
-            options.host is None
+            options.device_ip is None
             and options.port is None
             and options.user is None
             and options.password is None
         )
 
-        options.host = self._resolve_auth_text_option(
-            options.host,
-            "Host",
+        if options.device_ip is None or options.password is None:
+            self.stderr.write(
+                "Set up access to a device. Use the same username and password you use\n"
+                "to log into the device's web admin page. agent-cli only uses them once\n"
+                "to install an SSH key, then connects as the agent user.\n\n"
+            )
+            self.stderr.flush()
+
+        options.device_ip = self._resolve_auth_text_option(
+            options.device_ip,
+            "Device IP address",
             prompt_if_missing=True,
             error_message="auth host must be a non-empty string",
         )
         options.port = self._resolve_auth_port_option(options.port, prompt_if_missing=prompt_all_auth_fields)
         options.user = self._resolve_auth_text_option(
             options.user,
-            "Bootstrap user",
+            "Web login username",
             default=DEFAULT_BOOTSTRAP_USER,
             prompt_if_missing=prompt_all_auth_fields,
             error_message="auth bootstrap user must be a non-empty string",
@@ -1092,10 +1270,13 @@ class RouterCli(object):
         if not options.agent_user:
             raise ConfigError("auth agent user must be a non-empty string")
 
-        if options.name is not None:
-            options.name = options.name.strip()
-            if not options.name:
-                raise ConfigError("auth device name must be a non-empty string")
+        options.name = self._resolve_auth_device_name(
+            options.name,
+            options.device_ip,
+            existing_names=existing_names,
+            overwrite=bool(getattr(options, "overwrite", False)),
+            prompt_if_missing=prompt_all_auth_fields,
+        )
 
     def _resolve_auth_text_option(self, value, label, default=None, prompt_if_missing=False, error_message=None):
         if value is None:
@@ -1114,7 +1295,7 @@ class RouterCli(object):
             if not prompt_if_missing:
                 return DEFAULT_SSH_PORT
             while True:
-                raw = self._prompt_required_auth_text("Port", default=str(DEFAULT_SSH_PORT))
+                raw = self._prompt_required_auth_text("SSH port", default=str(DEFAULT_SSH_PORT))
                 try:
                     port = int(raw)
                 except ValueError:
@@ -1130,10 +1311,66 @@ class RouterCli(object):
 
     def _resolve_auth_password_option(self, value):
         if value is None:
-            return self._prompt_required_auth_text("Password", secret=True)
+            return self._prompt_required_auth_text("Web login password", secret=True)
         if value:
             return value
         raise ConfigError("auth password must be a non-empty string")
+
+    def _resolve_auth_device_name(self, value, host, existing_names, overwrite, prompt_if_missing):
+        if value is not None:
+            normalized = value.strip() if isinstance(value, str) else ""
+            if not normalized:
+                raise ConfigError("auth device name must be a non-empty string")
+            if normalized in existing_names and not overwrite:
+                raise ConfigError(
+                    "device {0!r} already exists in the config file; "
+                    "pass --overwrite to replace it, or use `auth remove {0}` first".format(normalized)
+                )
+            return normalized
+
+        if not prompt_if_missing:
+            default = host
+            if default in existing_names and not overwrite:
+                raise ConfigError(
+                    "device {0!r} already exists in the config file; "
+                    "pass --name to choose a different name, --overwrite to replace it, "
+                    "or use `auth remove {0}` first".format(default)
+                )
+            return default
+
+        while True:
+            candidate = self._prompt_required_auth_text("Device name", default=host)
+            if candidate not in existing_names or overwrite:
+                return candidate
+            if self._prompt_yes_no(
+                "Device {0!r} already exists. Overwrite?".format(candidate)
+            ):
+                return candidate
+
+    def _prompt_yes_no(self, label):
+        prompt = "{0} [y/N]: ".format(label)
+        self.stderr.write(prompt)
+        self.stderr.flush()
+        value = self.stdin.readline()
+        if value == "":
+            raise ConfigError("authentication input cancelled")
+        answer = value.rstrip("\r\n").strip().lower()
+        return answer in ("y", "yes")
+
+    def _read_existing_device_names(self, config_path):
+        if not os.path.exists(config_path):
+            return set()
+        try:
+            with open(config_path, "r") as handle:
+                payload = json.load(handle)
+        except (IOError, OSError, ValueError):
+            return set()
+        if not isinstance(payload, dict):
+            return set()
+        devices = payload.get("devices")
+        if not isinstance(devices, dict):
+            return set()
+        return set(devices.keys())
 
     def _prompt_required_auth_text(self, label, default=None, secret=False):
         while True:
@@ -1282,15 +1519,15 @@ class RouterCli(object):
             bridge.ssh_defaults["command_timeout_sec"],
             DEFAULT_UPGRADE_TIMEOUT_SEC,
         )
-        host_header = profile["host"]
+        host_header = profile["device_ip"]
 
         try:
             with self._open_api_tunnel(bridge, device_id, timeout) as tunnel:
                 token = self._api_login(
                     tunnel,
                     host_header,
-                    profile["bootstrap_user"],
-                    profile["bootstrap_password"],
+                    profile["user"],
+                    profile["pass"],
                     timeout,
                 )
                 self._api_upload_firmware(
@@ -1616,10 +1853,10 @@ class RouterCli(object):
     def _build_auth_device_spec(self, options, device_name):
         parts = [
             "name={0}".format(device_name),
-            "host={0}".format(options.host),
+            "device_ip={0}".format(options.device_ip),
             "pass={0}".format(options.password),
-            "buser={0}".format(options.user),
-            "user={0}".format(options.agent_user),
+            "user={0}".format(options.user),
+            "agent_user={0}".format(options.agent_user),
             "port={0}".format(options.port),
         ]
         return ",".join(parts)
@@ -1650,10 +1887,10 @@ class RouterCli(object):
         }
         payload["devices"] = dict(devices)
         payload["devices"][device_name] = {
-            "host": options.host,
-            "user": options.agent_user,
-            "bootstrap_user": options.user,
-            "bootstrap_password": options.password,
+            "device_ip": options.device_ip,
+            "agent_user": options.agent_user,
+            "user": options.user,
+            "pass": options.password,
             "port": options.port,
         }
         return payload
@@ -1680,6 +1917,8 @@ class RouterCli(object):
             """\
             agent-cli commands:
               auth                      Bootstrap SSH key access and save local config
+              auth list                 List saved devices in the config file
+              auth remove <name>...     Remove one or more saved devices (use --all to remove every device)
               help [topic]              Show general help or help for one topic
               status [<key>|list]       Read all status, list status keys, or read one status key
               config <subcommand>       Discover config roots, read one key, or write one root payload
@@ -1692,7 +1931,7 @@ class RouterCli(object):
 
             Global options:
               --config <path>           Read saved devices from a config file
-              --device <spec>           Inline device spec: name=<id>,host=<host>,pass=<password>[,buser=<user>][,user=<user>][,port=<port>] (`pass=` is supported for compatibility but not recommended)
+              --device <spec>           Inline device spec: name=<id>,device_ip=<ip>,pass=<password>[,user=<web_user>][,agent_user=<agent_user>][,port=<port>] (`pass=` is visible in process arguments)
               --runtime-dir <path>      Runtime directory for keys, known_hosts, and default config
               --device-id <id>          Select the target device when multiple devices are configured
               --timeout-sec <sec>       Per-command SSH timeout override
@@ -1707,16 +1946,28 @@ class RouterCli(object):
         return textwrap.dedent(
             """\
             Usage:
-              agent-cli auth [--host <host>] [--port <port>] [--user <bootstrap_user>] [--pass <password>] [--name <device_id>] [--agent-user <agent_user>] [--takeover]
+              agent-cli auth [--device-ip <ip>] [--port <port>] [--user <web_user>] [--pass <password>] [--name <device_name>] [--agent-user <agent_user>] [--takeover] [--overwrite]
+              agent-cli auth list
+              agent-cli auth remove <name> [<name>...]
+              agent-cli auth remove --all
 
             Behavior:
-              `agent-cli auth` with no auth flags prompts for host, port, user, and password.
-              Missing values still use defaults for --port and --user, and prompt for a missing host or password.
+              `agent-cli auth` with no auth flags prompts for device IP address, SSH port, web login username and password, and the device name to save it under.
+              Missing values still use defaults for --port, --user, and the device name (defaults to the device IP), and prompt for a missing device IP or password.
               `--pass` is kept for compatibility with existing scripts, but the password is visible in process arguments while the command runs.
+              If the chosen device name already exists in the config file, interactive runs ask before overwriting; non-interactive runs abort unless --overwrite is given.
+              `auth list` prints the device entries saved in the config file (passwords are never returned).
+              `auth remove <name>...` deletes one or more device entries; the operation is all-or-nothing and aborts if any name is unknown.
+              `auth remove --all` deletes every saved device entry. SSH key files under the runtime directory are left in place.
 
             Examples:
               agent-cli auth
-              agent-cli auth --host 192.0.2.10 --name lab-a
+              agent-cli auth --device-ip 192.0.2.10 --name lab-a
+              agent-cli auth --device-ip 192.0.2.10 --name lab-a --overwrite
+              agent-cli auth list
+              agent-cli auth remove lab-a
+              agent-cli auth remove lab-a lab-b
+              agent-cli auth remove --all
             """
         )
 
@@ -1975,7 +2226,7 @@ def parse_args(argv):
         "--device",
         action="append",
         default=[],
-        help="Inline device definition: name=<id>,host=<host>,pass=<password>[,buser=<user>][,user=<user>][,port=<port>]. `pass=` is supported for compatibility but is visible in process arguments.",
+        help="Inline device definition: name=<id>,device_ip=<ip>,pass=<password>[,user=<web_user>][,agent_user=<agent_user>][,port=<port>]. The password is visible in process arguments while the command runs.",
     )
     parser.add_argument(
         "--runtime-dir",
@@ -1991,14 +2242,16 @@ def parse_args(argv):
 
     auth_parser = subparsers.add_parser("auth", add_help=False, help="Bootstrap SSH access and store device configuration.")
     auth_parser.add_argument("-h", "--help", action="store_true", dest="_ignored_help", help=argparse.SUPPRESS)
-    auth_parser.add_argument("--name", default=None, help="Local device id. Defaults to the host value.")
-    auth_parser.add_argument("--host", default=None, help="Device host or IP address. Prompted if omitted.")
-    auth_parser.add_argument("--user", default=None, help="Bootstrap SSH username. Prompted if omitted; defaults to adm.")
+    auth_parser.add_argument("--name", default=None, help="Local device name. Defaults to the device IP value.")
+    auth_parser.add_argument("--device-ip", default=None, help="Device IP address. Prompted if omitted.")
+    auth_parser.add_argument("--user", default=None, help="Web admin username used once to install the SSH key. Prompted if omitted; defaults to adm.")
     auth_parser.add_argument("--agent-user", default=DEFAULT_AGENT_USER, help="Runtime SSH username. Defaults to agent.")
-    auth_parser.add_argument("--pass", dest="password", default=None, help="Bootstrap SSH password. Supported for compatibility, but visible in process arguments while the command runs.")
+    auth_parser.add_argument("--pass", dest="password", default=None, help="Web admin password. Supported for compatibility, but visible in process arguments while the command runs.")
     auth_parser.add_argument("--port", type=int, default=None, help="SSH port. Prompted if omitted; defaults to 22.")
     auth_parser.add_argument("--takeover", dest="auth_takeover", action="store_true", help="Force takeover if another client currently holds the key lease.")
-    auth_parser.set_defaults(auth_takeover=False)
+    auth_parser.add_argument("--overwrite", action="store_true", help="Replace an existing device entry with the same name without confirmation.")
+    auth_parser.set_defaults(auth_takeover=False, overwrite=False)
+    auth_parser.add_argument("auth_args", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
 
     sessiond_parser = subparsers.add_parser("__sessiond", add_help=False, help=argparse.SUPPRESS)
     sessiond_parser.add_argument("--session-state-file", required=True, help=argparse.SUPPRESS)

@@ -414,7 +414,7 @@ class _OpenSSHBootstrapClient(object):
         }
 
     def run(self, profile, command, connect_timeout_sec, command_timeout_sec, known_hosts_file):
-        user_at_host = "{0}@{1}".format(profile["bootstrap_user"], profile["host"])
+        user_at_host = "{0}@{1}".format(profile["user"], profile["device_ip"])
         ssh_command = [
             self.ssh_bin,
             "-T",
@@ -441,7 +441,7 @@ class _OpenSSHBootstrapClient(object):
 
         return self._run_askpass_bootstrap(
             ssh_command,
-            profile["bootstrap_password"],
+            profile["pass"],
             command,
             command_timeout_sec,
         )
@@ -621,7 +621,7 @@ class SSHBridge(object):
         profile = self.devices[device_id]
         defaults = self.ssh_defaults
 
-        user_at_host = "{0}@{1}".format(profile["user"], profile["host"])
+        user_at_host = "{0}@{1}".format(profile["agent_user"], profile["device_ip"])
 
         command = [
             self.ssh_bin,
@@ -990,21 +990,21 @@ class SSHBridge(object):
                 )
 
             normalized_devices[device_id] = {
-                "host": self._require_string(device.get("host"), "devices.{0}.host".format(device_id)),
-                "user": self._require_string(
-                    device.get("user", DEFAULT_AGENT_USER),
-                    "devices.{0}.user".format(device_id),
+                "device_ip": self._require_string(device.get("device_ip"), "devices.{0}.device_ip".format(device_id)),
+                "agent_user": self._require_string(
+                    device.get("agent_user", DEFAULT_AGENT_USER),
+                    "devices.{0}.agent_user".format(device_id),
                 ),
                 "identity_file": identity_file,
                 "public_key_file": public_key_file,
                 "public_key": public_key,
-                "bootstrap_user": self._require_string(
-                    device.get("bootstrap_user", DEFAULT_BOOTSTRAP_USER),
-                    "devices.{0}.bootstrap_user".format(device_id),
+                "user": self._require_string(
+                    device.get("user", DEFAULT_BOOTSTRAP_USER),
+                    "devices.{0}.user".format(device_id),
                 ),
-                "bootstrap_password": self._require_string(
-                    device.get("bootstrap_password"),
-                    "devices.{0}.bootstrap_password".format(device_id),
+                "pass": self._require_string(
+                    device.get("pass"),
+                    "devices.{0}.pass".format(device_id),
                 ),
                 "port": self._validate_positive_int(
                     device.get("port", 22),
@@ -1098,7 +1098,7 @@ class SSHBridge(object):
         Uses ssh-keyscan to fetch host keys if not already present.
         """
         known_hosts_file = self.ssh_defaults["known_hosts_file"]
-        host = profile["host"]
+        host = profile["device_ip"]
         port = profile["port"]
 
         # Check if host already in known_hosts

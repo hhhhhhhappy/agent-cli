@@ -40,7 +40,7 @@ This skill is a **dependency**, not a router or default entry point.
 
 ## Route By Intent (use inline params first; open reference only when needed)
 
-- **Auth / bootstrap**: `agent-cli auth [--host <ip> --name <id>]`. Prompts for host/port/user/pass if no flags. For full global options (`--config`, `--runtime-dir`, `--timeout-sec`, `--takeover`) see [references/transport-cli.md](references/transport-cli.md).
+- **Auth / bootstrap**: `agent-cli auth [--device-ip <ip> --name <id>]`. Prompts for device IP, SSH port, web login user/password, and device name if no flags. Manage saved devices with `agent-cli auth list` and `agent-cli auth remove <name>` (or `--all`). For full global options (`--config`, `--runtime-dir`, `--timeout-sec`, `--takeover`, `--overwrite`) see [references/transport-cli.md](references/transport-cli.md).
 - **Transport choice**: Prefer MCP when available (structured read-only: `status`, `config`, `log`, `schema`, `tool`, `upgrade`, `reboot`). Fall back to CLI when MCP unavailable or for auth/bootstrap. MCP fixed resource URIs: `device://<device_id>/status/basic` etc. See [references/transport-mcp.md](references/transport-mcp.md).
 - **Device selection**: `device_id` required when multiple devices. Omit when exactly one. Never invent `default`.
 - **Safety / approval**: Read-only by default. Explicit approval before `config set`, `upgrade`, `reboot`. Hard stops on unknown device_id / root / payload. See [references/safety.md](references/safety.md) for full gates.

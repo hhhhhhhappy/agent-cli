@@ -21,13 +21,13 @@ DEFAULT_RUNTIME_KEYS_DIR_NAME = "keys"
 DEFAULT_RUNTIME_CONTROL_PATH_DIR_NAME = "ssh-control"
 DEFAULT_UPGRADE_TIMEOUT_SEC = 600
 MAX_UPGRADE_TIMEOUT_SEC = 1800
-DEVICE_SPEC_REQUIRED_FIELDS = ("name", "host", "pass")
+DEVICE_SPEC_REQUIRED_FIELDS = ("name", "device_ip", "pass")
 DEVICE_SPEC_FIELD_MAP = {
     "name": "name",
-    "host": "host",
-    "pass": "bootstrap_password",
-    "buser": "bootstrap_user",
+    "device_ip": "device_ip",
+    "pass": "pass",
     "user": "user",
+    "agent_user": "agent_user",
     "port": "port",
 }
 
@@ -530,8 +530,18 @@ class CommandSurface(object):
     def _require_known_device(self, value):
         device_id = self._require_token(value, "device_id")
         if not self.bridge.has_device(device_id):
-            raise JSONRPCError(ERR_INVALID_PARAMS, "Unknown device_id")
+            raise JSONRPCError(
+                ERR_INVALID_PARAMS,
+                "Unknown device_id",
+                {"configured_device_ids": self._list_configured_device_ids()},
+            )
         return device_id
+
+    def _list_configured_device_ids(self):
+        device_ids_getter = getattr(self.bridge, "get_device_ids", None)
+        if callable(device_ids_getter):
+            return list(device_ids_getter())
+        return []
 
     def _validate_timeout(self, timeout_sec, maximum=120):
         if timeout_sec is None:
@@ -617,10 +627,10 @@ def _parse_device_spec(spec):
 
     return {
         "name": parsed["name"],
-        "host": parsed["host"],
-        "user": parsed.get("user", "agent"),
-        "bootstrap_user": parsed.get("buser", "adm"),
-        "bootstrap_password": parsed["pass"],
+        "device_ip": parsed["device_ip"],
+        "agent_user": parsed.get("agent_user", "agent"),
+        "user": parsed.get("user", "adm"),
+        "pass": parsed["pass"],
         "port": port,
     }
 
@@ -633,10 +643,10 @@ def build_inline_config(device_specs, runtime_dir):
         if device_id in devices:
             raise ConfigError("Duplicate device name `{0}` in --device arguments".format(device_id))
         devices[device_id] = {
-            "host": device["host"],
+            "device_ip": device["device_ip"],
+            "agent_user": device["agent_user"],
             "user": device["user"],
-            "bootstrap_user": device["bootstrap_user"],
-            "bootstrap_password": device["bootstrap_password"],
+            "pass": device["pass"],
             "port": device["port"],
         }
 

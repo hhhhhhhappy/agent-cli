@@ -32,7 +32,7 @@ class ClaudeCodeWindowsInstallerTest(unittest.TestCase):
         os.makedirs(self.config_dir)
         os.makedirs(self.project_dir)
         with open(self.config_example_path, "w") as handle:
-            json.dump({"devices": {"lab-ir624": {"host": "192.0.2.10"}}}, handle)
+            json.dump({"devices": {"lab-ir624": {"device_ip": "192.0.2.10"}}}, handle)
         with open(self.python_path, "w") as handle:
             handle.write("")
         with open(self.claude_path, "w") as handle:
@@ -47,7 +47,7 @@ class ClaudeCodeWindowsInstallerTest(unittest.TestCase):
         self.assertTrue(created)
         with open(self.config_path, "r") as handle:
             payload = json.load(handle)
-        self.assertEqual(payload["devices"]["lab-ir624"]["host"], "192.0.2.10")
+        self.assertEqual(payload["devices"]["lab-ir624"]["device_ip"], "192.0.2.10")
 
     def test_resolve_python_command_prefers_py_launcher(self):
         command, args = installer.resolve_python_command(
