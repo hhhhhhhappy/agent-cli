@@ -835,7 +835,6 @@ class RouterCli(object):
                     "device_ip": options.device_ip,
                     "port": options.port,
                     "user": options.user,
-                    "agent_user": options.agent_user,
                 },
             }
         )
@@ -849,7 +848,7 @@ class RouterCli(object):
         runtime_dir = self._resolve_runtime_dir(options.runtime_dir)
         config_path = self._resolve_config_path(options.config, runtime_dir)
 
-        devices = []
+        device_ids = []
         if os.path.exists(config_path):
             try:
                 with open(config_path, "r") as handle:
@@ -860,24 +859,15 @@ class RouterCli(object):
 
             raw_devices = payload.get("devices") if isinstance(payload, dict) else None
             if isinstance(raw_devices, dict):
-                for name in sorted(raw_devices.keys()):
-                    entry = raw_devices[name]
-                    if not isinstance(entry, dict):
-                        continue
-                    devices.append({
-                        "name": name,
-                        "device_ip": entry.get("device_ip"),
-                        "port": entry.get("port"),
-                        "agent_user": entry.get("agent_user"),
-                        "user": entry.get("user"),
-                    })
+                device_ids = sorted(
+                    name for name, entry in raw_devices.items() if isinstance(entry, dict)
+                )
 
         self._write_json({
             "ok": True,
             "data": {
                 "config_path": config_path,
-                "runtime_dir": runtime_dir,
-                "devices": devices,
+                "device_ids": device_ids,
             },
         })
         return EXIT_OK
@@ -1856,7 +1846,6 @@ class RouterCli(object):
             "device_ip={0}".format(options.device_ip),
             "pass={0}".format(options.password),
             "user={0}".format(options.user),
-            "agent_user={0}".format(options.agent_user),
             "port={0}".format(options.port),
         ]
         return ",".join(parts)
@@ -1888,7 +1877,6 @@ class RouterCli(object):
         payload["devices"] = dict(devices)
         payload["devices"][device_name] = {
             "device_ip": options.device_ip,
-            "agent_user": options.agent_user,
             "user": options.user,
             "pass": options.password,
             "port": options.port,
@@ -1931,7 +1919,7 @@ class RouterCli(object):
 
             Global options:
               --config <path>           Read saved devices from a config file
-              --device <spec>           Inline device spec: name=<id>,device_ip=<ip>,pass=<password>[,user=<web_user>][,agent_user=<agent_user>][,port=<port>] (`pass=` is visible in process arguments)
+              --device <spec>           Inline device spec: name=<id>,device_ip=<ip>,pass=<password>[,user=<web_user>][,port=<port>] (`pass=` is visible in process arguments)
               --runtime-dir <path>      Runtime directory for keys, known_hosts, and default config
               --device-id <id>          Select the target device when multiple devices are configured
               --timeout-sec <sec>       Per-command SSH timeout override
@@ -1946,7 +1934,7 @@ class RouterCli(object):
         return textwrap.dedent(
             """\
             Usage:
-              agent-cli auth [--device-ip <ip>] [--port <port>] [--user <web_user>] [--pass <password>] [--name <device_name>] [--agent-user <agent_user>] [--takeover] [--overwrite]
+              agent-cli auth [--device-ip <ip>] [--port <port>] [--user <web_user>] [--pass <password>] [--name <device_name>] [--takeover] [--overwrite]
               agent-cli auth list
               agent-cli auth remove <name> [<name>...]
               agent-cli auth remove --all
@@ -1956,7 +1944,7 @@ class RouterCli(object):
               Missing values still use defaults for --port, --user, and the device name (defaults to the device IP), and prompt for a missing device IP or password.
               `--pass` is kept for compatibility with existing scripts, but the password is visible in process arguments while the command runs.
               If the chosen device name already exists in the config file, interactive runs ask before overwriting; non-interactive runs abort unless --overwrite is given.
-              `auth list` prints the device entries saved in the config file (passwords are never returned).
+              `auth list` returns the names of every device saved in the config file. No credentials or per-device fields are returned; inspect the config file directly when you need details.
               `auth remove <name>...` deletes one or more device entries; the operation is all-or-nothing and aborts if any name is unknown.
               `auth remove --all` deletes every saved device entry. SSH key files under the runtime directory are left in place.
 
@@ -1968,6 +1956,9 @@ class RouterCli(object):
               agent-cli auth remove lab-a
               agent-cli auth remove lab-a lab-b
               agent-cli auth remove --all
+
+            `auth list` output shape:
+              {"ok": true, "data": {"config_path": "<path>", "device_ids": ["<name>", ...]}}
             """
         )
 
@@ -2226,7 +2217,7 @@ def parse_args(argv):
         "--device",
         action="append",
         default=[],
-        help="Inline device definition: name=<id>,device_ip=<ip>,pass=<password>[,user=<web_user>][,agent_user=<agent_user>][,port=<port>]. The password is visible in process arguments while the command runs.",
+        help="Inline device definition: name=<id>,device_ip=<ip>,pass=<password>[,user=<web_user>][,port=<port>]. The password is visible in process arguments while the command runs.",
     )
     parser.add_argument(
         "--runtime-dir",
@@ -2245,12 +2236,11 @@ def parse_args(argv):
     auth_parser.add_argument("--name", default=None, help="Local device name. Defaults to the device IP value.")
     auth_parser.add_argument("--device-ip", default=None, help="Device IP address. Prompted if omitted.")
     auth_parser.add_argument("--user", default=None, help="Web admin username used once to install the SSH key. Prompted if omitted; defaults to adm.")
-    auth_parser.add_argument("--agent-user", default=DEFAULT_AGENT_USER, help="Runtime SSH username. Defaults to agent.")
     auth_parser.add_argument("--pass", dest="password", default=None, help="Web admin password. Supported for compatibility, but visible in process arguments while the command runs.")
     auth_parser.add_argument("--port", type=int, default=None, help="SSH port. Prompted if omitted; defaults to 22.")
     auth_parser.add_argument("--takeover", dest="auth_takeover", action="store_true", help="Force takeover if another client currently holds the key lease.")
     auth_parser.add_argument("--overwrite", action="store_true", help="Replace an existing device entry with the same name without confirmation.")
-    auth_parser.set_defaults(auth_takeover=False, overwrite=False)
+    auth_parser.set_defaults(auth_takeover=False, overwrite=False, agent_user=DEFAULT_AGENT_USER)
     auth_parser.add_argument("auth_args", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
 
     sessiond_parser = subparsers.add_parser("__sessiond", add_help=False, help=argparse.SUPPRESS)

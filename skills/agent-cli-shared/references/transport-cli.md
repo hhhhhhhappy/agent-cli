@@ -38,7 +38,7 @@ Common options from the CLI help:
 Inline device specs use:
 
 ```text
-name=<id>,device_ip=<ip>,pass=<password>[,user=<web_user>][,agent_user=<agent_user>][,port=<port>]
+name=<id>,device_ip=<ip>,pass=<password>[,user=<web_user>][,port=<port>]
 ```
 
 Field meanings:
@@ -47,7 +47,6 @@ Field meanings:
 - `device_ip`: device IP address (required)
 - `pass`: web login password (required; used once to install the SSH key)
 - `user`: web login username (default `adm`)
-- `agent_user`: long-lived SSH user installed after bootstrap (default `agent`)
 - `port`: SSH port (default `22`)
 
 ## Discovery Commands

@@ -37,7 +37,7 @@ The fastest setup path is to configure devices inline with `--device` and let th
 Each `--device` value uses this format:
 
 ```text
-name=<id>,device_ip=<ip>,pass=<password>[,user=<web_user>][,agent_user=<agent_user>][,port=<port>]
+name=<id>,device_ip=<ip>,pass=<password>[,user=<web_user>][,port=<port>]
 ```
 
 Field meanings:
@@ -46,7 +46,6 @@ Field meanings:
 - `device_ip`: required device IP address
 - `pass`: required web admin password (used once to install the SSH key)
 - `user`: optional web admin username, defaults to `adm`
-- `agent_user`: optional runtime SSH username installed after bootstrap, defaults to `agent`
 - `port`: optional SSH port, defaults to `22`
 
 Repeat `--device` to configure multiple devices. On first run, the server will:

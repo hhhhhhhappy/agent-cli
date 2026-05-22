@@ -2428,7 +2428,7 @@ def parse_args(argv):
         default=[],
         help=(
             "Inline device definition: "
-            "name=<id>,device_ip=<ip>,pass=<password>[,user=<web_user>][,agent_user=<agent_user>][,port=<port>]. "
+            "name=<id>,device_ip=<ip>,pass=<password>[,user=<web_user>][,port=<port>]. "
             "Repeat --device to configure multiple devices without a JSON config file."
         ),
     )

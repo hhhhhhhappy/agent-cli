@@ -133,7 +133,6 @@ uvx --from git+https://github.com/inhandnet/agent-cli agent-cli-skills install
 - `pass`: web login password (required)
 - *(optional)* `name`: a friendly id (defaults to the device IP)
 - *(optional)* `user`: web login username (default `adm`)
-- *(optional)* `agent_user`: long-lived SSH user installed after bootstrap (default `agent`, rarely changed)
 - *(optional)* `port`: SSH port (default `22`)
 
 **Step 3 — Bootstrap**
@@ -172,7 +171,7 @@ Each skill ships transport references for both [CLI](skills/agent-cli-shared/ref
 Used for the MCP server and one-off CLI calls:
 
 ```text
-name=<id>,device_ip=<ip>,pass=<password>[,user=<web_user>][,agent_user=<agent_user>][,port=<port>]
+name=<id>,device_ip=<ip>,pass=<password>[,user=<web_user>][,port=<port>]
 ```
 
 | Field        | Required | Default | Description                                              |
@@ -181,7 +180,6 @@ name=<id>,device_ip=<ip>,pass=<password>[,user=<web_user>][,agent_user=<agent_us
 | `device_ip`  | yes      | -       | Device IP address                                        |
 | `pass`       | yes      | -       | Web login password (used once to install the SSH key)    |
 | `user`       | no       | `adm`   | Web login username                                       |
-| `agent_user` | no       | `agent` | Long-lived SSH user installed after bootstrap            |
 | `port`       | no       | `22`    | SSH port                                                 |
 
 Runtime directories: `~/.agent-cli/` for the CLI, `~/.agent-mcp/` for the MCP server. Generated keys, host metadata, and session state are written there on first use.
@@ -204,7 +202,7 @@ Runtime directories: `~/.agent-cli/` for the CLI, `~/.agent-mcp/` for the MCP se
 agent-mcp --config /path/to/devices.json
 ```
 
-`agent_user` and `port` are optional and fall back to `agent` / `22` when omitted.
+`port` is optional and falls back to `22` when omitted.
 
 ## Operations
 
